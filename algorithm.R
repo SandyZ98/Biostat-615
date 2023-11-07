@@ -12,7 +12,7 @@ devtools::create("ventilation_rate_package")
 #' @examples
 
 
-#  Ventilation rate calculation based on the built-up method
+#  Ventilation rate calculation based on the built-up method -- (Chendi: haven't completely figure it out, just trying)
 calculate_ventilation_rate <- function(co2_data, num_individuals, respiration_rate, room_volume) {
   # Ensure the length of co2_data matches the number of hours
   if (length(co2_data) != num_hours) {
