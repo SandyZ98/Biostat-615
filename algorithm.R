@@ -21,7 +21,7 @@ calculate_expected_co2 <- function(air_exchange_rate) {
   np <- 5  # Number of individuals
   n_GP <- 2  # need to define
   B <- 0.05  # need to define
-  delta_t <- 1  # Time interval (min?)
+  delta_t <- 1  # Time interval (hour)
   
   AS <- (6e4 * n_GP) / (V * (Cs - Cr))
   exp_Bdt <- exp(B * delta_t)
