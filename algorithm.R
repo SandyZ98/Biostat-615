@@ -30,19 +30,13 @@ calculate_expected_co2 <- function(air_exchange_rate) {
   return(expected_co2)
 }
 
-
-
-
-#  Newton-Raphson algorithm
-
-
 #' Calculate Hessian Matrix
 #'
 #' @param expected_co2 Expected CO2 concentration
 #' @param air_exchange_rate Air exchange rate (ACH)
 #' @return Numerical approximation of the Hessian matrix
 #' @export
-calculate_hessian <- function(expected_co2, air_exchange_rate, delta = 1e-5) {
+calculate_hessian <- function(expected_co2, air_exchange_rate, delta = 1e-5, regularization = 1e-6) {
   # Calculate the elements of the Hessian matrix using numerical differentiation
   hessian <- matrix(0, nrow = 2, ncol = 2)
   
@@ -59,49 +53,47 @@ calculate_hessian <- function(expected_co2, air_exchange_rate, delta = 1e-5) {
   
   hessian[2, 1] <- hessian[1, 2]  # The Hessian matrix is symmetric
   
+  # Add regularization term to the diagonal elements
+  hessian[1, 1] <- hessian[1, 1] + regularization
+  hessian[2, 2] <- hessian[2, 2] + regularization
+  
   return(hessian)
 }
 
-
-
-
-#  Implement the dampened Newton-Raphson algorithm to solve for the air exchange rate
-
-
+# Implement the dampened Newton-Raphson algorithm with regularization
 calculate_ventilation_rate <- function(co2_data) {
-  # Initial values for air exchange rate and tolerance
-  air_exchange_rate <- 2  #need to adjust
-  tolerance <- 1e-6  #need to adjust
+  # Initial value for air exchange rate
+  air_exchange_rate <- 2  
   
-  # Maximum number of iterations
-  max_iterations <- 100 #need to adjust
+  # Maximum number of iterations and convergence tolerance
+  max_iterations <- 100 
+  tolerance <- 1e-6  
   
   for (iteration in 1:max_iterations) {
     # Calculate the expected CO2 concentration based on the current air exchange rate
     expected_co2 <- calculate_expected_co2(air_exchange_rate)
     
-    # Calculate the Hessian matrix for the Newton-Raphson update
+    # Calculate the Hessian matrix with regularization for the Newton-Raphson update
     hessian <- calculate_hessian(expected_co2, air_exchange_rate)
     
-    # Update the air exchange rate using the dampened Newton-Raphson method
-    delta <- solve(hessian, gradient)
-    air_exchange_rate <- air_exchange_rate + delta
+    # Use the Newton-Raphson update to find the next air exchange rate
+    delta <- solve(hessian, c(0, 0))  # Assuming initial gradient is [0, 0]
+    air_exchange_rate <- air_exchange_rate - delta[2]  # Update air exchange rate based on the second component of delta
     
     # Check for convergence
-    if (max(abs(delta)) < tolerance) {
+    if (abs(delta[2]) < tolerance) {
       break
     }
   }
   
   # Calculate the room ventilation rate from the final air exchange rate
-  room_volume <- 100 #need to adjust
+  room_volume <- 100  # Need to adjust
   ventilation_rate <- air_exchange_rate * room_volume
   return(ventilation_rate)
 }
 
 ventilation_rate <- calculate_ventilation_rate(co2_data)
 cat("Room Ventilation Rate:", ventilation_rate, "m³/hour")
-
 
 devtools::build()
 devtools::install()
@@ -132,3 +124,5 @@ calculate_gradient <- function(co2_data, expected_co2, air_exchange_rate, delta 
   
   return(gradient)
 }
+
+
