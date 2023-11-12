@@ -1,0 +1,123 @@
+#get some data
+data = readxl::read_excel("Insert Path")
+#Convert to date time using POSIX
+data[,1] = as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%j/%m/%Y %I:%M:%S %p")
+
+#Lets do a running 10 point forward average and variance
+data$'10 Point Avg' = data$`Carbon dioxide(ppm)`
+data$'10 Point Var'= data$`Carbon dioxide(ppm)`
+for (i in seq(1:dim(data)[1])){
+  #get values
+  #if i < 6, just go from 1 to i + 5
+  #if i > dim(data)[1] - 5, just go from i - 5 to dim(data)[1]
+  if (i < 6){
+    values = data$`Carbon dioxide(ppm)`[1:(i + 5)]
+  }else if (i > dim(data)[1] - 5){
+    values = data$`Carbon dioxide(ppm)`[(i - 5):dim(data)[1]]
+  } else {
+    values = data$`Carbon dioxide(ppm)`[(i - 5):(i + 5)]
+  }
+  data$'10 Point Avg'[i] = mean(values)
+  data$'10 Point Var'[i] = var(values)
+}
+
+#Alsoneed to calculate the slopes
+data$'10 Point Slope' = c(0, (data$`10 Point Avg`[2:dim(data)[1]] -  data$`10 Point Avg`[1:dim(data)[1] - 1]) / 
+                            as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+
+#plot to look at data
+par(mfrow = c(2,2))
+plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Avg`)
+plot(data$`Time(dd/mm/yyyy)`, data$`Carbon dioxide(ppm)`)
+plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Var`)
+plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Slope`)
+
+#Lets plot on smaller scale for finer graphical interpretation
+for (i in seq(1, ceiling(dim(data)[1] / 100))){
+  range = dim(data)[1] %% 100
+  lower = (i-1)*range + 1
+  upper = i*range
+  par(mfrow = c(2,2))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Avg`[lower:upper])
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Carbon dioxide(ppm)`[lower:upper])
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Var`[lower:upper])
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Slope`[lower:upper])
+}
+
+#Look at quantiles to try and estimate appropriate cutoff
+quantile(data$`10 Point Var`, probs = seq(0.05,0.95,.05))
+
+#save cutoff value. I think 90% is reasonable, can add as argument in function call
+cutoff = quantile(data$`10 Point Var`, probs = 0.9)
+
+#Create data frane to hold our exponential growth and decay periods
+useful_data = data.frame("Index Start" = c(), "Index Stop" = c(), "Type" = c())
+
+#get indexes
+indexes = which(data$`10 Point Var` >= cutoff)
+#Sequential indexes will be part of the same growth / decay process. Can assign these indexes the same number
+#Want to know when indexes[i] != indexes[i + 1]. Can use these index values as our index values for our points.
+#Need to call back from indexes to get the correct index from our data
+indexes = indexes[which(indexes[1: length(indexes) - 1] + 1 != indexes[2 : length(indexes)])]
+
+#From each index, we need to go backwards in time and forwards in time until the slope of our
+#10 point Var changes from positive to negative or negative  to positive - need to find the 
+#adjacent local maxima and minima. Also want to make sure that when this happens, we are below
+#our 90% quantile cutoff
+
+#lets reset the plot layout
+par(mfrow = c(1,1))
+
+for (ind in indexes){
+  #Get Slope
+  slope = data$`10 Point Slope`[ind]
+  #If slope is positive
+  if (slope > 0){
+    #If slope is positive, type is growth
+    type_val = "Growth"
+    
+    #Get the slope of all points preceding that are negative
+    temp = which(data$`10 Point Slope`[1:ind] < 0)
+    #The last value of temp will give the index of the value at which the 
+    #exponential process started
+    start = temp[length(temp)]
+    
+    #Now, we do the same, but in the forward direction
+    temp = which(data$`10 Point Slope`[ind:dim(data)[1]] < 0)
+    #This time, we want the first value that meets the critera
+    stop = temp[1]
+    
+    #Create dummy dataframe to append values
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
+    
+    #Append to existing Data Frame
+    useful_data = rbind(useful_data, dummy)
+    
+  }
+  else{ 
+    #othwerwise, slope is negative
+    type_val = "Decay"
+    
+    #Get the slope of all points preceding that are positive
+    temp = which(data$`10 Point Slope`[1:ind] > 0)
+    #The last value of temp will give the index of the value at which the 
+    #exponential process stopped
+    start = temp[length(temp)]
+    
+    #Now, we do the same, but in the forward direction
+    temp = which(data$`10 Point Slope`[ind:dim(data)[1]] > 0)
+    #This time, we want the first value that meets the critera. However, we need to add
+    #a value of ind - 1 to get the correct index value
+    stop = temp[1] + ind - 1
+    
+    #Create dummy dataframe to append values
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
+    
+    #Append to existing Data Frame
+    useful_data = rbind(useful_data, dummy)
+  }
+  
+}
+
+
+
