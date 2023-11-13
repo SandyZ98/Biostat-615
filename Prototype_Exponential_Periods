@@ -1,5 +1,5 @@
 #get some data
-data = readxl::read_excel("Insert Path")
+data = readxl::read_excel("Insert Path of Aranet Sensor Data")
 #Convert to date time using POSIX
 data[,1] = as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%j/%m/%Y %I:%M:%S %p")
 
@@ -21,7 +21,7 @@ for (i in seq(1:dim(data)[1])){
   data$'10 Point Var'[i] = var(values)
 }
 
-#Alsoneed to calculate the slopes
+#Also need to calculate the slopes
 data$'10 Point Slope' = c(0, (data$`10 Point Avg`[2:dim(data)[1]] -  data$`10 Point Avg`[1:dim(data)[1] - 1]) / 
                             as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
 
@@ -84,8 +84,9 @@ for (ind in indexes){
     
     #Now, we do the same, but in the forward direction
     temp = which(data$`10 Point Slope`[ind:dim(data)[1]] < 0)
-    #This time, we want the first value that meets the critera
-    stop = temp[1]
+    #This time, we want the first value that meets the critera. However, we need to add
+    #a value of ind - 2 to get the correct index value
+    stop = temp[1] + ind - 2
     
     #Create dummy dataframe to append values
     dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
@@ -107,8 +108,8 @@ for (ind in indexes){
     #Now, we do the same, but in the forward direction
     temp = which(data$`10 Point Slope`[ind:dim(data)[1]] > 0)
     #This time, we want the first value that meets the critera. However, we need to add
-    #a value of ind - 1 to get the correct index value
-    stop = temp[1] + ind - 1
+    #a value of ind - 2 to get the correct index value
+    stop = temp[1] + ind - 2
     
     #Create dummy dataframe to append values
     dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
@@ -116,8 +117,10 @@ for (ind in indexes){
     #Append to existing Data Frame
     useful_data = rbind(useful_data, dummy)
   }
-  
+  #While we are here, plot the sections
+  plot(data$`Time(dd/mm/yyyy)`[start:stop], data$`10 Point Avg`[start:stop])
 }
 
-
+#Sometimes there are duplicates. We can remove duplicates using unique
+useful_data = unique(useful_data)
 
