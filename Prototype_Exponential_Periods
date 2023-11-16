@@ -1,67 +1,123 @@
 #get some data
-data = readxl::read_excel("Insert Path of Aranet Sensor Data")
+data = readxl::read_excel("Insert Path")
 #Convert to date time using POSIX
 data[,1] = as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%j/%m/%Y %I:%M:%S %p")
 
-#Lets do a running 10 point forward average and variance
-data$'10 Point Avg' = data$`Carbon dioxide(ppm)`
-data$'10 Point Var'= data$`Carbon dioxide(ppm)`
-for (i in seq(1:dim(data)[1])){
-  #get values
-  #if i < 6, just go from 1 to i + 5
-  #if i > dim(data)[1] - 5, just go from i - 5 to dim(data)[1]
-  if (i < 6){
-    values = data$`Carbon dioxide(ppm)`[1:(i + 5)]
-  }else if (i > dim(data)[1] - 5){
-    values = data$`Carbon dioxide(ppm)`[(i - 5):dim(data)[1]]
-  } else {
-    values = data$`Carbon dioxide(ppm)`[(i - 5):(i + 5)]
+#Lets do a running p point forward average and variance
+#Need to find the lowest p value which causes smoothing
+#of the data. Can check for smoothness by doing u tests / t tests
+#between base data slope and p point slope distributions
+
+#Create data frames to hold slope, avg, and var
+p_slope = data.frame("base" = data$`Carbon dioxide(ppm)`)
+p_slope$'base'= c(0, (data$`Carbon dioxide(ppm)`[2:dim(data)[1]] -  data$`Carbon dioxide(ppm)`[1:dim(data)[1] - 1]) / 
+                       as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+p_avg = data.frame('base' = data$`Carbon dioxide(ppm)`)
+p_var = data.frame('base' = rep(0,dim(data)[1]))
+
+#Start the loop
+p = 1
+while (p > 0) {
+  #initialize storage of data
+  p_avg[, paste(p)] = p_slope$base 
+  p_var[, paste(p)] = p_slope$base
+  #for each index value, calculate the slope, avg, and var
+  for (i in seq(1:dim(data)[1])){
+    #get values
+    #if i < p+1, just go from 1 to i + p
+    #if i > dim(data)[1] - p, just go from i - p to dim(data)[1]
+    if (i < p + 1){
+      values = data$`Carbon dioxide(ppm)`[1:(i + p)]
+    }else if (i > dim(data)[1] - p){
+      values = data$`Carbon dioxide(ppm)`[(i - p):dim(data)[1]]
+    } else {
+      values = data$`Carbon dioxide(ppm)`[(i - p):(i + p)]
+    }
+    #assign values
+    p_avg[i, paste(p)] = mean(values)
+    p_var[i, paste(p)] = var(values)
+
   }
-  data$'10 Point Avg'[i] = mean(values)
-  data$'10 Point Var'[i] = var(values)
+  #After having all the values, can calcualte slope
+  p_slope[, paste(p)] = c(0, (p_avg[2:dim(data)[1], paste(p)] -  p_avg[1:dim(data)[1] - 1, paste(p)]) / 
+                            as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+  #For p = 1, we want to skip
+  if (p == 1){
+    #iterate p
+    p = p + 1
+    next
+  }
+  #Our condition for stopping is if the distribution of slopes for p is:
+  #Significantly different from base
+  #Not significantly different from previous
+  #In this case, we want the values from p - 1
+  #Need to use KS test as this test is sensitive to changes in the shape of the distribution
+  #The means of the distributions are not going to differ, but their shapes will
+  test_base = ks.test(p_slope[, paste(p)], p_slope$base, exact = TRUE)
+  test_prev = ks.test(p_slope[, paste(p)], p_slope[, paste(p - 1)], exact = TRUE)
+  
+  #If we meet our conditons
+  if ((test_base$p.value < 0.05) & (test_prev$p.value > 0.05)){
+    #save minimal p value
+    p = p - 1
+    break
+  }
+
+  p = p + 1
 }
 
-#Also need to calculate the slopes
-data$'10 Point Slope' = c(0, (data$`10 Point Avg`[2:dim(data)[1]] -  data$`10 Point Avg`[1:dim(data)[1] - 1]) / 
-                            as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
-
+#Save relevant p value data to our main data frame
+data$'Interval Avg' = p_avg[, paste(p)]
+data$'Interval Var' = p_var[, paste(p)]
+data$'Interval Slope' = p_slope[, paste(p)]
 #plot to look at data
 par(mfrow = c(2,2))
-plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Avg`)
-plot(data$`Time(dd/mm/yyyy)`, data$`Carbon dioxide(ppm)`)
-plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Var`)
-plot(data$`Time(dd/mm/yyyy)`, data$`10 Point Slope`)
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Avg`, xlab = 'Time', ylab = 'Interval Average CO2 Concentration(ppm)', 
+     main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+plot(data$`Time(dd/mm/yyyy)`, data$`Carbon dioxide(ppm)`, xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+     main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Var`, xlab = 'Time', ylab = 'Interval CO2 Variance', 
+     main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Slope`, xlab = 'Time', ylab = 'Interval CO2 Slope', 
+     main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
 
 #Lets plot on smaller scale for finer graphical interpretation
-for (i in seq(1, ceiling(dim(data)[1] / 100))){
-  range = dim(data)[1] %% 100
+#input range of data points to plot
+range = 100
+for (i in seq(1, ceiling(dim(data)[1] / range))) {
+  #need to options for range. Last plot will not plot 100 points, but just the remainder
+  range_sub = 0
+  if (i == ceiling(dim(data)[1] / range)){
+    range_sub = range - dim(data)[1] %% range
+  }
   lower = (i-1)*range + 1
-  upper = i*range
+  upper = i*range - range_sub
   par(mfrow = c(2,2))
-  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Avg`[lower:upper])
-  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Carbon dioxide(ppm)`[lower:upper])
-  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Var`[lower:upper])
-  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`10 Point Slope`[lower:upper])
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Avg`[lower:upper], xlab = 'Time', ylab = 'Interval Average CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Carbon dioxide(ppm)`[lower:upper], xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Var`[lower:upper], xlab = 'Time', ylab = 'Interval CO2 Variance', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Slope`[lower:upper], xlab = 'Time', ylab = 'Interval CO2 Slope', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
 }
 
-#Look at quantiles to try and estimate appropriate cutoff
-quantile(data$`10 Point Var`, probs = seq(0.05,0.95,.05))
-
 #save cutoff value. I think 90% is reasonable, can add as argument in function call
-cutoff = quantile(data$`10 Point Var`, probs = 0.9)
+cutoff = quantile(data$`Interval Var`, probs = 0.9)
 
 #Create data frane to hold our exponential growth and decay periods
-useful_data = data.frame("Index Start" = c(), "Index Stop" = c(), "Type" = c())
+useful_data = data.frame("Index Start" = c(), "Index Stop" = c(), "Type" = c(), "Time Start" = c(), "Time Stop" = c())
 
 #get indexes
-indexes = which(data$`10 Point Var` >= cutoff)
+indexes = which(data$`Interval Var` >= cutoff)
 #Sequential indexes will be part of the same growth / decay process. Can assign these indexes the same number
 #Want to know when indexes[i] != indexes[i + 1]. Can use these index values as our index values for our points.
 #Need to call back from indexes to get the correct index from our data
-indexes = indexes[which(indexes[1: length(indexes) - 1] + 1 != indexes[2 : length(indexes)])]
+indexes = c(indexes[which(indexes[1: length(indexes) - 1] + 1 != indexes[2 : length(indexes)])], indexes[length(indexes)])
 
 #From each index, we need to go backwards in time and forwards in time until the slope of our
-#10 point Var changes from positive to negative or negative  to positive - need to find the 
+#Interval Var changes from positive to negative or negative  to positive - need to find the 
 #adjacent local maxima and minima. Also want to make sure that when this happens, we are below
 #our 90% quantile cutoff
 
@@ -70,26 +126,41 @@ par(mfrow = c(1,1))
 
 for (ind in indexes){
   #Get Slope
-  slope = data$`10 Point Slope`[ind]
+  slope = data$`Interval Slope`[ind]
   #If slope is positive
   if (slope > 0){
     #If slope is positive, type is growth
     type_val = "Growth"
     
-    #Get the slope of all points preceding that are negative
-    temp = which(data$`10 Point Slope`[1:ind] < 0)
-    #The last value of temp will give the index of the value at which the 
-    #exponential process started
-    start = temp[length(temp)]
+    #Get the slope of all points preceding that are non-positive
+    temp = which(data$`Interval Slope`[1:ind] <= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the beginning of the data
+    if (length(temp) == 0){
+      start = 1
+    }else{
+      #The last value of temp will give the index of the value at which the 
+      #exponential process started
+      start = temp[length(temp)]
+    }
     
     #Now, we do the same, but in the forward direction
-    temp = which(data$`10 Point Slope`[ind:dim(data)[1]] < 0)
-    #This time, we want the first value that meets the critera. However, we need to add
-    #a value of ind - 2 to get the correct index value
-    stop = temp[1] + ind - 2
+    temp = which(data$`Interval Slope`[ind:dim(data)[1]] <= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the end of the data
+    if (length(temp) == 0){
+      stop = dim(data)[1]
+    }else{
+      #This time, we want the first value that meets the critera. However, we need to add
+      #a value of ind - 2 to get the correct index value
+      stop = temp[1] + ind - 2
+    }
     
     #Create dummy dataframe to append values
-    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val),
+                       "Time Start" = data$`Time(dd/mm/yyyy)`[start], "Time Stop" = data$`Time(dd/mm/yyyy)`[stop])
     
     #Append to existing Data Frame
     useful_data = rbind(useful_data, dummy)
@@ -99,28 +170,45 @@ for (ind in indexes){
     #othwerwise, slope is negative
     type_val = "Decay"
     
-    #Get the slope of all points preceding that are positive
-    temp = which(data$`10 Point Slope`[1:ind] > 0)
-    #The last value of temp will give the index of the value at which the 
-    #exponential process stopped
-    start = temp[length(temp)]
+    #Get the slope of all points preceding that are non-negative
+    temp = which(data$`Interval Slope`[1:ind] >= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the beginning of the data
+    if (length(temp) == 0){
+      start = 1
+    }else{
+      #The last value of temp will give the index of the value at which the 
+      #exponential process started
+      start = temp[length(temp)]
+    }
     
     #Now, we do the same, but in the forward direction
-    temp = which(data$`10 Point Slope`[ind:dim(data)[1]] > 0)
-    #This time, we want the first value that meets the critera. However, we need to add
-    #a value of ind - 2 to get the correct index value
-    stop = temp[1] + ind - 2
+    temp = which(data$`Interval Slope`[ind:dim(data)[1]] >= 0)
+    
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the end of the data
+    if (length(temp) == 0){
+      stop = dim(data)[1]
+    }else{
+      #This time, we want the first value that meets the critera. However, we need to add
+      #a value of ind - 2 to get the correct index value
+      stop = temp[1] + ind - 2
+    }
     
     #Create dummy dataframe to append values
-    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val))
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val),
+                       "Time Start" = data$`Time(dd/mm/yyyy)`[start], "Time Stop" = data$`Time(dd/mm/yyyy)`[stop])
     
     #Append to existing Data Frame
     useful_data = rbind(useful_data, dummy)
   }
   #While we are here, plot the sections
-  plot(data$`Time(dd/mm/yyyy)`[start:stop], data$`10 Point Avg`[start:stop])
+  plot(data$`Time(dd/mm/yyyy)`[start:stop], data$`Interval Avg`[start:stop],
+       xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[start], ' to ', paste(data$`Time(dd/mm/yyyy)`[stop], sep = '')))
 }
 
 #Sometimes there are duplicates. We can remove duplicates using unique
 useful_data = unique(useful_data)
-
