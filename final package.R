@@ -1,11 +1,11 @@
-Step 1: Package Structure
+#Step 1: Package Structure
 library(usethis)
 library(devtools)
 library(readxl)
 library(stats)
-create_package(path = "path")
+create_package(path = "C:/Users/zhaocd/Desktop/615 project/co2")
 
-Step 2: Main Functions
+#Step 2: Main Functions
 #' Analyze CO2 Data
 #'
 #' This function performs an analysis on CO2 data, calculating running averages, variances,
@@ -20,12 +20,12 @@ Step 2: Main Functions
 analyze_co2_data <- function(data) {
   # Convert to date time using POSIX
   data[,1] <- as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%d/%m/%Y %H:%M:%S")
-
+  
   # Initial processing
   p_slope <- data.frame("base" = data$`Carbon dioxide(ppm)`)
   p_avg <- data.frame('base' = data$`Carbon dioxide(ppm)`)
   p_var <- data.frame('base' = rep(0, nrow(data)))
-
+  
   # Start of the main loop
   p = 1
   while (p > 0) {
@@ -42,30 +42,29 @@ analyze_co2_data <- function(data) {
       p_avg[i, as.character(p)] <- mean(values)
       p_var[i, as.character(p)] <- var(values)
     }
-
+    
     # Calculate slope for p
     p_slope[, as.character(p)] <- c(0, (p_avg[2:nrow(data), as.character(p)] - p_avg[1:(nrow(data) - 1), as.character(p)]) / 
-                                    as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:nrow(data)], 
-                                                        data$`Time(dd/mm/yyyy)`[1:(nrow(data) - 1)], units = 'secs')))
-
+                                      as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:nrow(data)], 
+                                                          data$`Time(dd/mm/yyyy)`[1:(nrow(data) - 1)], units = 'secs')))
+    
     # KS test for stopping conditions
     test_base <- ks.test(p_slope[, as.character(p)], p_slope$base, exact = TRUE)
     test_prev <- ks.test(p_slope[, as.character(p)], p_slope[, as.character(p - 1)], exact = TRUE)
-  
+    
     # Check stopping conditions
     if ((test_base$p.value < 0.05) && (test_prev$p.value > 0.05)) {
       p <- p - 1
       break
     }
-
+    
     p <- p + 1
   }
-
+  
   # Append p value data to the main data frame
   data$'Interval Avg' <- p_avg[, as.character(p)]
   data$'Interval Var' <- p_var[, as.character(p)]
   data$'Interval Slope' <- p_slope[, as.character(p)]
-  ))
 }
 
 
@@ -84,48 +83,49 @@ analyze_co2_data <- function(data) {
 
 plot_co2_data <- function(analyzed_data) {
   plots <- list()
-
+  
   # Ensure the input is as expected
   if ("data" %in% names(analyzed_data)) {
     data <- analyzed_data$data
   } else {
     stop("Invalid input: expected output from analyze_co2_data function")
   }
-
+  
   # Plotting code
   par(mfrow = c(2, 2))
-
+  
   plot1 <- plot(data$`Time(dd/mm/yyyy)`, data$`Interval Avg`, xlab = 'Time', ylab = 'Interval Average CO2 Concentration(ppm)', 
-          main = "Interval Average CO2 Concentration")
+                main = "Interval Average CO2 Concentration")
   plots[[1]] <- plot1
-
+  
   plot2 <- plot(data$`Time(dd/mm/yyyy)`, data$`Carbon dioxide(ppm)`, xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
-          main = "CO2 Concentration")
+                main = "CO2 Concentration")
   plots[[2]] <- plot2
-
+  
   plot3 <- plot(data$`Time(dd/mm/yyyy)`, data$`Interval Var`, xlab = 'Time', ylab = 'Interval CO2 Variance', 
-          main = "Interval CO2 Variance")
+                main = "Interval CO2 Variance")
   plots[[3]] <- plot3
-
+  
   plot4 <- plot(data$`Time(dd/mm/yyyy)`, data$`Interval Slope`, xlab = 'Time', ylab = 'Interval CO2 Slope', 
-          main = "Interval CO2 Slope")
+                main = "Interval CO2 Slope")
   plots[[4]] <- plot4
-
+  
   return(plots)
 }
 
-Step 3: Handling Dependencies
+#Step 3: Handling Dependencies
 Imports:
-    readxl,
-    stats
+  readxl,
+stats
 Suggests:
-    ggplot2
+  ggplot2
 
-Step 4: Build and Test the Package
-devtools::load_all("path")
-devtools::document("path")
-devtools::install("path")
-devtools::check("path")
+#Step 4: Build and Test the Package
+devtools::load_all("C:/Users/zhaocd/Desktop/615 project/co2")
+devtools::document("C:/Users/zhaocd/Desktop/615 project/co2")
+devtools::install("C:/Users/zhaocd/Desktop/615 project/co2")
+devtools::check("C:/Users/zhaocd/Desktop/615 project/co2")
 
 
-data = readxl::read_excel("Insert Path")
+data = readxl::read_excel("C:/Users/zhaocd/Desktop/615 project/Prototype_Exponential_Periods.xlsx")
+
