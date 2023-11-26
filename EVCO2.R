@@ -11,8 +11,8 @@ create_package(path = "/Users/chendizhao/Desktop/615 project/EVCO2")
 #' This function performs an analysis on CO2 data, calculating running averages, variances,
 #' and identifying growth and decay periods.
 #'
-#' @param data_path The path to the Excel file containing the CO2 data.
-#' @return A list containing analyzed data and plots.
+#' @param data The dataset containing the CO2 data.
+#' @return A list containing analyzed data.
 #' @export
 #' @examples
 #' analyze_co2_data("path/to/your/data.xlsx")
