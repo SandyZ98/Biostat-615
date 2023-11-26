@@ -3,6 +3,13 @@ library(usethis)
 library(devtools)
 library(readxl)
 library(stats)
+library(testthat)
+library(microbenchmark)
+library(roxygen2) # for documentation
+library(covr)
+library(shiny)
+
+
 create_package(path = "/Users/chendizhao/Desktop/615 project/EVCO2")
 
 #Step 2: Main Functions
@@ -148,8 +155,16 @@ devtools::document("/Users/chendizhao/Desktop/615 project/EVCO2")
 devtools::install("/Users/chendizhao/Desktop/615 project/EVCO2")
 devtools::check("/Users/chendizhao/Desktop/615 project/EVCO2")
 
-
 test_data = readxl::read_excel("/Users/chendizhao/Desktop/615 project/Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
 dim(test_data)
 names(test_data)
 
+#Performance Testing
+microbenchmark(
+  results1 = { analyze_co2_data }, 
+  times = 100  # number of times each expression is evaluated
+)
+
+
+#Code Coverage Analysis
+package_coverage("/Users/chendizhao/Desktop/615 project/EVCO2")
