@@ -7,6 +7,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(patchwork)
 ```
 
 Using the first-order exponential integrator, we have
@@ -26,9 +28,9 @@ $$ \frac{\partial}{\partial Q} = \sum_{i=1}^{n} 2(\hat{C_i}-C_i)[(-E/Q^2)(1-exp^
 exp(-Q/V\Delta t)(\Delta t/V)]$$
 
 
-Second derivative with respect to Q:
+Second derivative with respect to Q
 
-$$
+
 
 
 One-dimensional optimization with Newton-Raphson:
@@ -39,14 +41,6 @@ A better way to format persondata and match it to the CO2data
 -- currently, persondata needs to start at 0 (first CO2 measurement) and end at the number of hours from the first to last CO2 measurement. If it is a 24 hour period, this is pretty simple. If it is >24 hours, care must be taken to make sure persondata is formatted properly
 
 ```{r}
-# load data for testing
-data = readxl::read_excel("Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
-times = data$`Time(dd/mm/yyyy)`
-times = as.POSIXct(times, format = "%d/%m/%Y %I:%M:%S %p")
-CO2 = data$`Carbon dioxide(ppm)`
-
-plot(times, CO2)
-
 # simulated data for testing
 persondata <- data.frame(
   time = c(0, 8, 8, 12, 12, 13, 13, 17, 24),
@@ -55,38 +49,54 @@ persondata <- data.frame(
   gender = rep(NA, 9),
   MET = c(NA, 3, 1.8, 3, 1.8, 3, 2, NA, NA),
   CO2rate = rep(NA, 9)
-) 
-simdata <- simulateData(persondata = persondata, volume=500, ventilation_rate = 2, CO2var = 0.01, method='Exponential')
+)
 
-CO2 = simdata$CO2
-freq=1
+freq=100
 volume=500
 envCO2=400
-Q = .1
+Q = .01
+
+simdata <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = Q, 
+                        CO2var = 1,
+                        method='Exponential', 
+                        freq=freq)
+
+CO2 = simdata$CO2
+
+
+ggplot(simdata, aes(x=time, y=CO2)) + 
+  geom_line() +   
+  geom_smooth()
 ```
 
 ```{r}
-estimate_ventilation <- function(freq, CO2, volume, envCO2, init.Q, temp=25, persondata, method='NR', max.iter=1000, tol=1e-6) {
+estimate_ventilation <- function(freq, CO2, volume, envCO2=NULL, init.Q, temp=25, persondata=NULL, critpoints=NULL, method='NR', max.iter=1000, tol=1e-8, verbose=FALSE, record.steps=FALSE) {
 
   # format data
   CO2 = as.numeric(CO2)
   
   # get emissions from persondata
-  if (is.null(persondata)) {
-    stop("persondata must be provided")
+  if (is.null(persondata) & method=="NR") {
+    stop("persondata must be provided for 1D Newton-Raphson optimization")
   }
-  emissions <- persondata_to_emission(persondata, temp, freq)
-  times <- emissions$times
-  nadj_CO2rate <- emissions$nadj_CO2rate
   
-  if(length(CO2) > length(times)) {
-    warning(sprintf("More CO2 measurements than expected from persondata. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Using the last row of persondata for the last %d CO2 measurements", length(CO2) - length(times)))
-    nadj_CO2rate <- c(nadj_CO2rate, rep(nadj_CO2rate[length(nadj_CO2rate)], length(CO2) - length(times)))
-  } else if(length(CO2) < length(times)) {
-    stop("More persondata than CO2 measurements. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Only using the provided persondata up until the last CO2 measurement")
-  }
-    nadj_CO2rate <- nadj_CO2rate[1:length(CO2)]
+  if(!is.null(persondata)){
     
+    emissions <- persondata_to_emission(persondata, temp, freq)
+    times <- emissions$times
+    nadj_CO2rate <- emissions$nadj_CO2rate
+  
+    if(length(CO2) > length(times)) {
+      warning(sprintf("More CO2 measurements than expected from persondata. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Using the last row of persondata for the last %d CO2 measurements", length(CO2) - length(times)))
+      nadj_CO2rate <- c(nadj_CO2rate, rep(nadj_CO2rate[length(nadj_CO2rate)], length(CO2) - length(times)))
+    } else if(length(CO2) < length(times)) {
+      warning("More persondata than CO2 measurements. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Only using the provided persondata up until the last CO2 measurement")
+   }
+      nadj_CO2rate <- nadj_CO2rate[1:length(CO2)]
+  }
+  
   # Convert from ppm to ug/m^3
   ppm_to_ug <- function(ppm, temp){
     ppm / 44.01 * 8314 * (273.15+temp) / 1000 / 101.325
@@ -100,37 +110,253 @@ estimate_ventilation <- function(freq, CO2, volume, envCO2, init.Q, temp=25, per
   envCO2 <- ppm_to_ug(envCO2, temp)
   CO2 <- ppm_to_ug(CO2, temp)
   
-  if(method=='NR'){  
-  # Gradient descent
+  # # Gradient descent
+  #   Q = init.Q
+  #   convergence = 0
+  #   for(iter in 1:max.iter){
+  #     ChatminusC = (nadj_CO2rate[1:(length(CO2)-1)]/Q*(1-exp(-Q/volume*freq))+(CO2[1:(length(CO2)-1)] - envCO2)*exp(-Q/volume*freq) + envCO2 - CO2[2:length(CO2)])
+  #     f = sum(ChatminusC^2)
+  #     #df = 2*(ChatminusC %*% ( -nadj_CO2rate[1:(length(CO2)-1)]/(Q^2)*(1-exp(-Q/volume*freq)) + (nadj_CO2rate[1:(length(CO2)-1)]/Q - CO2[1:(length(CO2)-1)] + envCO2)*exp(-Q/volume*freq)*freq/volume))
+  #     #df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
+  #     df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
+  #     Q2 = Q - 1e-4*f/df
+  #     # print(paste("f:",f))
+  #     # print(paste("df:",df))
+  #     # print(paste("Q2:",Q2))
+  #     if(Q2 < 0){
+  #       warning("Large jump resulted in negative Q. Returning previous Q")
+  #       break()
+  #     }
+  #     if(abs(Q2-Q) < tol){
+  #       convergence=1
+  #       break()
+  #     }
+  #     Q = Q2
+  #   }
+  # }
+  
+  # Newton-Raphson
+  if(method == 'NR'){
+    if (verbose) {
+      print("Running Newton-Raphson")
+    }
+    
+    if (record.steps) {
+      steps <- data.frame(iter=numeric(max.iter),
+                          Q=numeric(max.iter), # estimates for ventilation rate
+                          f=numeric(max.iter), # sum of squares
+                          df=numeric(max.iter), # derivative of SS
+                          d2f=numeric(max.iter)) # 2nd derivative of SS
+    }
+    
     Q = init.Q
     convergence = 0
+    E = nadj_CO2rate[1:(length(CO2)-1)]
+    Ci_1 = CO2[1:(length(CO2)-1)]
+    Ci = CO2[2:length(CO2)]
     for(iter in 1:max.iter){
-      ChatminusC = (nadj_CO2rate[1:(length(CO2)-1)]/Q*(1-exp(-Q/volume*freq))+(CO2[1:(length(CO2)-1)] - envCO2)*exp(-Q/volume*freq) + envCO2 - CO2[2:length(CO2)])
-      f = sum(ChatminusC^2)
-      #df = 2*(ChatminusC %*% ( -nadj_CO2rate[1:(length(CO2)-1)]/(Q^2)*(1-exp(-Q/volume*freq)) + (nadj_CO2rate[1:(length(CO2)-1)]/Q - CO2[1:(length(CO2)-1)] + envCO2)*exp(-Q/volume*freq)*freq/volume))
-      #df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
-      df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
-      Q2 = Q - 1e-4*f/df
-      # print(paste("f:",f))
-      # print(paste("df:",df))
-      # print(paste("Q2:",Q2))
-      if(Q2 < 0){
-        warning("Large jump resulted in negative Q. Returning previous Q")
-        break()
+      expQ = exp(-Q/volume*freq)
+      Chat_C = E/Q*(1-expQ)+(Ci_1 - envCO2)*expQ + envCO2 - Ci
+      derivChat_C = -E/(Q^2) * (1-expQ) + expQ * (freq / volume) * (E/Q - Ci_1 + envCO2)
+      f = 2*sum(Chat_C*derivChat_C)
+      df = 2*sum(derivChat_C^2 + Chat_C*(
+        2*E/(Q^3)*(1-expQ) -
+        expQ * (freq/volume)^2 * (E/Q - Ci_1 + envCO2) + 
+        2*E/Q^2 * expQ *(-freq/volume) 
+        ))
+      Q2 = Q - f/df
+      
+      if (verbose) {
+        print(paste("Iter:",iter, 
+                    "Q:", Q2, 
+                    "df:",f, 
+                    "d2f:",df))
       }
-      if(abs(Q2-Q) < tol){
+      
+      if (record.steps) {
+        steps[iter,] <- c(iter=iter, 
+                          Q=Q, 
+                          f=Chat_C %*% Chat_C, 
+                          df=f, 
+                          d2f=df)
+      }
+      
+      if(abs(Q-Q2) < tol){
         convergence=1
         break()
       }
-      Q = Q2
+      Q=Q2
     }
   }
-    return(list(est_ventilation = Q, iter=iter, convergence=convergence))
+    if (record.steps) {
+      steps=steps[1:iter,]
+      
+      return(list(est_ventilation = Q, 
+                  iter=iter, 
+                  convergence=convergence,
+                  steps=steps))
+    } else {
+       return(list(est_ventilation = Q, 
+                  iter=iter, 
+                  convergence=convergence)) 
+    }
+  
+  if(method == 'Newton'){
+    if (verbose) {
+      print("Running Multi-dimensional Newton Method")
+    }
+    if(is.null(envCO2)){
+      envCO2.init = 400
+    }
+    if(is.null(persondata)){
+      if(is.null(critpoints)) {
+        stop('Must provide a vector of indices corresponding to times where people enter/exit the room')
+      }
+      nadj_CO2rate = rep(0, length(CO2))
+      
+    }
+    
+    if (record.steps) {
+      steps <- data.frame(iter=numeric(max.iter),
+                          Q=numeric(max.iter), # estimates for ventilation rate
+                          
+                          f=numeric(max.iter)) # sum of squares
+    }
+    
+    Q = init.Q
+    convergence = 0
+    # Need to implement:
+    # need E1 = nadj_CO2rate[1:critpoint[1]], E2 = ..., 
+    # then E = c(E1, E2, ...)
+    # need derivatives and hessian 
+    E = nadj_CO2rate[1:(length(CO2)-1)]
+    Ci_1 = CO2[1:(length(CO2)-1)]
+    Ci = CO2[2:length(CO2)]
+    for(iter in 1:max.iter){
+      expQ = exp(-Q/volume*freq)
+      Chat_C = E/Q*(1-expQ)+(Ci_1 - envCO2)*expQ + envCO2 - Ci
+      derivChat_C = -E/(Q^2) * (1-expQ) + expQ * (freq / volume) * (E/Q - Ci_1 + envCO2)
+      f = 2*sum(Chat_C*derivChat_C)
+      df = 2*sum(derivChat_C^2 + Chat_C*(
+        2*E/(Q^3)*(1-expQ) -
+          expQ * (freq/volume)^2 * (E/Q - Ci_1 + envCO2) + 
+          2*E/Q^2 * expQ *(-freq/volume) 
+      ))
+      Q2 = Q - f/df
+      
+      if (verbose) {
+        print(paste("Iter:",iter, 
+                    "Q:", Q2, 
+                    "df:",f, 
+                    "d2f:",df))
+      }
+      
+      if (record.steps) {
+        steps[iter,] <- c(iter=iter, 
+                          Q=Q, 
+                          f=Chat_C %*% Chat_C, 
+                          df=f, 
+                          d2f=df)
+      }
+      
+      if(abs(Q-Q2) < tol){
+        convergence=1
+        break()
+      }
+      Q=Q2
+    }
+  }
 }
 
-estimate_ventilation(freq=1, CO2=simdata$CO2, volume=500, envCO2=400, init.Q=1, temp=25, persondata=persondata, method='NR', max.iter=10000, tol=1e-8)
 ```
 
 ```{r}
+estimate_ventilation(freq=freq, 
+                     CO2=simdata$CO2, 
+                     volume=volume, 
+                     envCO2=envCO2, 
+                     init.Q=2, 
+                     temp=temp, 
+                     persondata=persondata, 
+                     method='NR', 
+                     max.iter=1000, 
+                     tol=1e-10,
+                     record.steps=TRUE) -> vent
 
+f.plot = ggplot(vent$steps, aes(x=iter, y=f)) +
+      geom_line() +
+      geom_point() +
+      theme_bw() +
+      labs(x="Iteration", y="f") +
+      ggtitle("f")
+
+df.plot = ggplot(vent$steps, aes(x=iter, y=df)) +
+      geom_line() +
+      geom_point() +
+      theme_bw() +
+      labs(x="Iteration", y="df") +
+      ggtitle("df")
+
+d2f.plot = ggplot(vent$steps, aes(x=iter, y=d2f)) +
+      geom_line() +
+      geom_point() +
+      theme_bw() +
+      labs(x="Iteration", y="d2f") +
+      ggtitle("d2f")
+
+Q.plot = ggplot(vent$steps, aes(x=iter, y=Q)) +
+      geom_line() +
+      geom_point() +
+      theme_bw() +
+      geom_abline(slope=0,
+                  intercept=vent$est_ventilation,
+                  color="red") +
+      labs(x="Iteration", y="Q") +
+      ggtitle("Q")
+
+(f.plot + df.plot)/(d2f.plot + Q.plot)
+
+```
+
+```{r}
+# load data for testing
+data = readxl::read_excel("Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
+data2 = readxl::read_excel("Aranet4 17877_2023-11-15T18_49_59-0500.xlsx")
+times = data$`Time(dd/mm/yyyy)`
+times = as.POSIXct(times, format = "%d/%m/%Y %I:%M:%S %p")
+times2 = as.POSIXct(data2$`Time(dd/mm/yyyy)`, format = "%d/%m/%Y %I:%M:%S %p")
+CO2 = data$`Carbon dioxide(ppm)`
+CO22 = data2$`Carbon dioxide(ppm)`
+
+ggplot(data=data.frame(times=times, CO2=CO2), aes(x=times, y=CO2)) + 
+  geom_line()
+
+ggplot(data=data.frame(times=times2, CO2=CO22), aes(x=times, y=CO2)) + 
+  geom_line()
+
+# fake persondata
+persondata <- data.frame(
+  time = c(0, 5, 18, 27, 40, 49, 55.03),
+  n = c(6, 0, 6, 0, 6, 0, 0)
+)
+
+volume = .0254^3*321*378*114
+envCO2 = 400
+
+# 6 ACH minimum ventilation when occupied
+
+# ACHPH = 3600Q/Volume
+
+realdata <- estimate_ventilation(freq=120, 
+                     CO2=CO2, 
+                     volume=volume, 
+                     envCO2=envCO2, 
+                     init.Q=1, 
+                     temp=temp, 
+                     persondata=persondata, 
+                     method='NR', 
+                     max.iter=1000, 
+                     tol=1e-10)
+
+realdata$est_ventilation/volume*3600
 ```
