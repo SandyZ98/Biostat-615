@@ -3,7 +3,7 @@ library(usethis)
 library(devtools)
 library(readxl)
 library(stats)
-create_package(path = "C:/Users/zhaocd/Desktop/615 project/co2")
+create_package(path = "/Users/chendizhao/Desktop/615 project/EVCO2")
 
 #Step 2: Main Functions
 #' Analyze CO2 Data
@@ -18,47 +18,69 @@ create_package(path = "C:/Users/zhaocd/Desktop/615 project/co2")
 #' analyze_co2_data("path/to/your/data.xlsx")
 
 analyze_co2_data <- function(data) {
-  # Convert to date time using POSIX
-  data[,1] <- as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%d/%m/%Y %H:%M:%S")
+  data[,1] = as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%j/%m/%Y %I:%M:%S %p")
   
-  # Initial processing
-  p_slope <- data.frame("base" = data$`Carbon dioxide(ppm)`)
-  p_avg <- data.frame('base' = data$`Carbon dioxide(ppm)`)
-  p_var <- data.frame('base' = rep(0, nrow(data)))
+  #Lets do a running p point forward average and variance
+  #Need to find the lowest p value which causes smoothing
+  #of the data. Can check for smoothness by doing u tests / t tests
+  #between base data slope and p point slope distributions
   
-  # Start of the main loop
+  #Create data frames to hold slope, avg, and var
+  p_slope = data.frame("base" = data$`Carbon dioxide(ppm)`)
+  p_slope$'base'= c(0, (data$`Carbon dioxide(ppm)`[2:dim(data)[1]] -  data$`Carbon dioxide(ppm)`[1:dim(data)[1] - 1]) / 
+                      as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+  p_avg = data.frame('base' = data$`Carbon dioxide(ppm)`)
+  p_var = data.frame('base' = rep(0,dim(data)[1]))
+  
+  #Start the loop
   p = 1
   while (p > 0) {
-    p_avg[, as.character(p)] <- p_slope$base 
-    p_var[, as.character(p)] <- p_slope$base
-    for (i in seq_len(nrow(data))){
+    #initialize storage of data
+    p_avg[, paste(p)] = p_slope$base 
+    p_var[, paste(p)] = p_slope$base
+    #for each index value, calculate the slope, avg, and var
+    for (i in seq(1:dim(data)[1])){
+      #get values
+      #if i < p+1, just go from 1 to i + p
+      #if i > dim(data)[1] - p, just go from i - p to dim(data)[1]
       if (i < p + 1){
-        values <- data$`Carbon dioxide(ppm)`[1:(i + p)]
-      } else if (i > nrow(data) - p){
-        values <- data$`Carbon dioxide(ppm)`[(i - p):nrow(data)]
+        values = data$`Carbon dioxide(ppm)`[1:(i + p)]
+      }else if (i > dim(data)[1] - p){
+        values = data$`Carbon dioxide(ppm)`[(i - p):dim(data)[1]]
       } else {
-        values <- data$`Carbon dioxide(ppm)`[(i - p):(i + p)]
+        values = data$`Carbon dioxide(ppm)`[(i - p):(i + p)]
       }
-      p_avg[i, as.character(p)] <- mean(values)
-      p_var[i, as.character(p)] <- var(values)
+      #assign values
+      p_avg[i, paste(p)] = mean(values)
+      p_var[i, paste(p)] = var(values)
+      
     }
+    #After having all the values, can calcualte slope
+    p_slope[, paste(p)] = c(0, (p_avg[2:dim(data)[1], paste(p)] -  p_avg[1:dim(data)[1] - 1, paste(p)]) / 
+                              as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+    #For p = 1, we want to skip
+    if (p == 1){
+      #iterate p
+      p = p + 1
+      next
+    }
+    #Our condition for stopping is if the distribution of slopes for p is:
+    #Significantly different from base
+    #Not significantly different from previous
+    #In this case, we want the values from p - 1
+    #Need to use KS test as this test is sensitive to changes in the shape of the distribution
+    #The means of the distributions are not going to differ, but their shapes will
+    test_base = ks.test(p_slope[, paste(p)], p_slope$base, exact = TRUE)
+    test_prev = ks.test(p_slope[, paste(p)], p_slope[, paste(p - 1)], exact = TRUE)
     
-    # Calculate slope for p
-    p_slope[, as.character(p)] <- c(0, (p_avg[2:nrow(data), as.character(p)] - p_avg[1:(nrow(data) - 1), as.character(p)]) / 
-                                      as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:nrow(data)], 
-                                                          data$`Time(dd/mm/yyyy)`[1:(nrow(data) - 1)], units = 'secs')))
-    
-    # KS test for stopping conditions
-    test_base <- ks.test(p_slope[, as.character(p)], p_slope$base, exact = TRUE)
-    test_prev <- ks.test(p_slope[, as.character(p)], p_slope[, as.character(p - 1)], exact = TRUE)
-    
-    # Check stopping conditions
-    if ((test_base$p.value < 0.05) && (test_prev$p.value > 0.05)) {
-      p <- p - 1
+    #If we meet our conditons
+    if ((test_base$p.value < 0.05) & (test_prev$p.value > 0.05)){
+      #save minimal p value
+      p = p - 1
       break
     }
     
-    p <- p + 1
+    p = p + 1
   }
   
   # Append p value data to the main data frame
@@ -121,11 +143,13 @@ Suggests:
   ggplot2
 
 #Step 4: Build and Test the Package
-devtools::load_all("C:/Users/zhaocd/Desktop/615 project/co2")
-devtools::document("C:/Users/zhaocd/Desktop/615 project/co2")
-devtools::install("C:/Users/zhaocd/Desktop/615 project/co2")
-devtools::check("C:/Users/zhaocd/Desktop/615 project/co2")
+devtools::load_all("/Users/chendizhao/Desktop/615 project/EVCO2")
+devtools::document("/Users/chendizhao/Desktop/615 project/EVCO2")
+devtools::install("/Users/chendizhao/Desktop/615 project/EVCO2")
+devtools::check("/Users/chendizhao/Desktop/615 project/EVCO2")
 
 
-data = readxl::read_excel("C:/Users/zhaocd/Desktop/615 project/Prototype_Exponential_Periods.xlsx")
+test_data = readxl::read_excel("/Users/chendizhao/Desktop/615 project/Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
+dim(test_data)
+names(test_data)
 
