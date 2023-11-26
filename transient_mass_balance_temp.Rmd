@@ -1,0 +1,136 @@
+---
+title: "transient mass balance"
+author: "Abby Mauger"
+date: "2023-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Using the first-order exponential integrator, we have
+
+$$ C_{t+1} = E/Q\{1-exp(-Q/V\Delta t)\} + (C_{t}-C_R)exp(-Q/V\Delta t) +C_R $$
+$$ E = n * CO2rate $$ is the CO2 emission rate in ug/s
+
+assume consistent units: CO2rate is in ug/s/person, Q is in m3/s, C is in ug/m3, V is in m3, and t is in s.
+
+We want to minimize the sum of squares between the predicted C and observed C
+
+$$ \sum_{i=1}^{n} (\hat{C_{i}} - C_{i})^2 = \sum_{i=1}^{n}(E/Q\{1-exp(-Q/V\Delta t)\} + (C_{i-1}-C_R)exp(-Q/V\Delta t) +C_R) -C_i)^2$$
+
+Taking the first derivative with respect to Q we get:
+
+$$ \frac{\partial}{\partial Q} = \sum_{i=1}^{n} 2(\hat{C_i}-C_i)[(-E/Q^2)(1-exp^{-Q/V\Delta t})+(E/Q + C_R-C_{i-1})
+exp(-Q/V\Delta t)(\Delta t/V)]$$
+
+
+Second derivative with respect to Q:
+
+$$
+
+
+One-dimensional optimization with Newton-Raphson:
+
+Future things to implement: estimate envCO2, estimate CO2 emissions without persondata or with limited persondata
+
+A better way to format persondata and match it to the CO2data
+-- currently, persondata needs to start at 0 (first CO2 measurement) and end at the number of hours from the first to last CO2 measurement. If it is a 24 hour period, this is pretty simple. If it is >24 hours, care must be taken to make sure persondata is formatted properly
+
+```{r}
+# load data for testing
+data = readxl::read_excel("Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
+times = data$`Time(dd/mm/yyyy)`
+times = as.POSIXct(times, format = "%d/%m/%Y %I:%M:%S %p")
+CO2 = data$`Carbon dioxide(ppm)`
+
+plot(times, CO2)
+
+# simulated data for testing
+persondata <- data.frame(
+  time = c(0, 8, 8, 12, 12, 13, 13, 17, 24),
+  n = c(0, 15, 2, 0, 0, 15, 2, 0, 0),
+  age = c(0, 8, 30, 8, 30, 8, 30, 0, 0),
+  gender = rep(NA, 9),
+  MET = c(NA, 3, 1.8, 3, 1.8, 3, 2, NA, NA),
+  CO2rate = rep(NA, 9)
+) 
+simdata <- simulateData(persondata = persondata, volume=500, ventilation_rate = 2, CO2var = 0.01, method='Exponential')
+
+CO2 = simdata$CO2
+freq=1
+volume=500
+envCO2=400
+Q = .1
+```
+
+```{r}
+estimate_ventilation <- function(freq, CO2, volume, envCO2, init.Q, temp=25, persondata, method='NR', max.iter=1000, tol=1e-6) {
+
+  # format data
+  CO2 = as.numeric(CO2)
+  
+  # get emissions from persondata
+  if (is.null(persondata)) {
+    stop("persondata must be provided")
+  }
+  emissions <- persondata_to_emission(persondata, temp, freq)
+  times <- emissions$times
+  nadj_CO2rate <- emissions$nadj_CO2rate
+  
+  if(length(CO2) > length(times)) {
+    warning(sprintf("More CO2 measurements than expected from persondata. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Using the last row of persondata for the last %d CO2 measurements", length(CO2) - length(times)))
+    nadj_CO2rate <- c(nadj_CO2rate, rep(nadj_CO2rate[length(nadj_CO2rate)], length(CO2) - length(times)))
+  } else if(length(CO2) < length(times)) {
+    stop("More persondata than CO2 measurements. Make sure the persondata starts at 0 and covers the same time period as the CO2 data. Only using the provided persondata up until the last CO2 measurement")
+  }
+    nadj_CO2rate <- nadj_CO2rate[1:length(CO2)]
+    
+  # Convert from ppm to ug/m^3
+  ppm_to_ug <- function(ppm, temp){
+    ppm / 44.01 * 8314 * (273.15+temp) / 1000 / 101.325
+  }
+  
+  # convert from ug/m^3 to ppm
+  ug_to_ppm <- function(ug, temp) {
+    ug * 44.01 * 1000 * 101.325 / 8314 / (273.15+temp)
+  }
+  
+  envCO2 <- ppm_to_ug(envCO2, temp)
+  CO2 <- ppm_to_ug(CO2, temp)
+  
+  if(method=='NR'){  
+  # Gradient descent
+    Q = init.Q
+    convergence = 0
+    for(iter in 1:max.iter){
+      ChatminusC = (nadj_CO2rate[1:(length(CO2)-1)]/Q*(1-exp(-Q/volume*freq))+(CO2[1:(length(CO2)-1)] - envCO2)*exp(-Q/volume*freq) + envCO2 - CO2[2:length(CO2)])
+      f = sum(ChatminusC^2)
+      #df = 2*(ChatminusC %*% ( -nadj_CO2rate[1:(length(CO2)-1)]/(Q^2)*(1-exp(-Q/volume*freq)) + (nadj_CO2rate[1:(length(CO2)-1)]/Q - CO2[1:(length(CO2)-1)] + envCO2)*exp(-Q/volume*freq)*freq/volume))
+      #df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
+      df = 2*sum(ChatminusC *(-nadj_CO2rate[1:(length(CO2)-1)]/(Q^2) * (1-exp(-Q/volume * freq)) + exp(-Q / volume * freq) * (freq / volume) * (nadj_CO2rate[1:(length(CO2)-1)] / Q - CO2[1:(length(CO2)-1)] + envCO2)))
+      Q2 = Q - 1e-4*f/df
+      # print(paste("f:",f))
+      # print(paste("df:",df))
+      # print(paste("Q2:",Q2))
+      if(Q2 < 0){
+        warning("Large jump resulted in negative Q. Returning previous Q")
+        break()
+      }
+      if(abs(Q2-Q) < tol){
+        convergence=1
+        break()
+      }
+      Q = Q2
+    }
+  }
+    return(list(est_ventilation = Q, iter=iter, convergence=convergence))
+}
+
+estimate_ventilation(freq=1, CO2=simdata$CO2, volume=500, envCO2=400, init.Q=1, temp=25, persondata=persondata, method='NR', max.iter=10000, tol=1e-8)
+```
+
+```{r}
+
+```
