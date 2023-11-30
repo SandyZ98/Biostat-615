@@ -29,12 +29,20 @@ build_up = function(AER, n, Gp, V, C0, C1, delta_t, Cr = 400){
 #' @param C1 : Final CO2 concentration (ppm)
 #' @param delta_t : Time difference (hours)
 #' @param Cr : Replacement Air CO2 concentration (ppm)
+#' @param iter_loop : Counts recursive iterations. Required to exit infinite loops. Set to exit after 100 recursive calls.
 #' @returns A list with the following attributes:
 #'        *start : start aer value for the secant method
 #'        *stop : stop aer value for the secant method
 #'        *next_iter_bound : range bound value if the method fails. Can call the function again with the maximum
 #'        value of range being this value
-secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
+secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400, iter_loop = 0){
+  #First, check to make sure that we have not passed 100 recursive iterations. If so, return all zeros and
+  #paste error message to console.
+  if (iter_loop > 100){
+    cat("Escape infinite loop. No appropriate starting conditions for the Secant method were found. Consider
+          increasing the maximum bound of the Air Exchange Rate to be estimated")
+    return(list(start = 0, stop = 0, next_iter_bound = 0))
+  }
   
   #Calculate build_up() values for each aer value in range
   bup_vals = c()
@@ -95,19 +103,28 @@ secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
   negative_vals = bup_vals[bup_vals < 0]
   #However, if negative_vals is empty, we need to recursively call our function with a smaller step size
   #and return the value from this recursive call.
+  
+  #It is important to note that, if the maximum value is not set appropriately, this will loop infinitely.
+  #If iter_loop >= 100, loop will end and error statement will be returned.
   if (length(negative_vals) == 0) {
+    #First, add 1 to iter_loop
+    iter_loop_next = iter_loop + 1
+    #Now, calculate new values for seq
     step_size = range[2] - range[1]
     step_new = step_size / 2
     #Note that step_new will always be a fraction. Thus, we want to multiply range[1] by step_new
     new_range = seq((range[1] * step_new), range[length(range)], step_new)
-    return(secant_starter(new_range, n, Gp, V, C0, C1, delta_t, Cr))
+    return(secant_starter(new_range, n, Gp, V, C0, C1, delta_t, Cr, iter_loop_next))
+    
   }
   #If negative_vals is not empty, we can then get the maximum negative value, get its index, and return the
   #aer value of that index + 1. We will then take the ceiling of that value, to prevent errors.
   max_neg_val = max(negative_vals)
   next_iter_bound = ceiling(range[which(bup_vals == max_neg_val) + 1])
   
-  return(list(start = aer_start, stop = aer_stop, next_iter_bound = next_iter_bound))
+  return(list(start = aer_start, 
+              stop = aer_stop, 
+              next_iter_bound = next_iter_bound))
   
 }  
 
@@ -120,6 +137,7 @@ secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
 #' @param C0 : Initial CO2 concentration (ppm)
 #' @param C1 : Final CO2 concentration (ppm)
 #' @param delta_t : Time difference (hours)
+#' @param max_aer: Maximum value of Air Exchange Rate to estimate / check
 #' @param Cr : Replacement Air CO2 concentration (ppm)
 #' @param tol : absolute difference of function values between steps we use as a stopping condition
 #' @param max_iter : maximum number of iterations
@@ -128,7 +146,7 @@ secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
 #'    * f_root - build_up(root)
 #'    * iter - number of iterations to reach the solution
 #'    * convergence - 0 if the root was found successfully, 1 if not found
-secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=1000){
+secant_method = function(n, Gp, V, C0, C1, delta_t, max_aer = 200, Cr = 400,tol=1e-10,max_iter=1000){
   
   #set convergence to 1
   convergence = 1
@@ -136,7 +154,7 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
   #First, we need to find appropriate starting conditions for the method.200 is a very
   #generous upper bound. We just want to make sure we aren't missing the AER solution
   
-  input_range = seq(1,200)
+  input_range = seq(1,max_aer)
   aer_0 = 0
   aer_1 = 0
   
@@ -177,18 +195,9 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
     #Calculate aer_2 via interpolation
     aer_2 = aer_1 + delta_aer
   }
-  return(list(root=aer_2, f_root = build_up(aer_2, n, Gp, V, C0, C1, delta_t, Cr), iter=iter, convergence=convergence))
+  return(list(root=aer_2, 
+              f_root = build_up(aer_2, n, Gp, V, C0, C1, delta_t, Cr), 
+              iter=iter, 
+              convergence=convergence))
   
 }
-
-  
-  
-  
-  
-  
-  
-
-
-
-
-
