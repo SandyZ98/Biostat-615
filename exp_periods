@@ -22,21 +22,18 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   #correct format
   
   if(abs(quant_cutoff) > 1){
-    cat("quant_cutoff must be a value between 0 and 1")
-    return()
+    stop("quant_cutoff must be a value between 0 and 1")
   }
   
   #Check to make sure they are one dimensional
   if((!is.null(dim(time_vec)) | (!is.null(dim(co2_vec))) )){
-    cat("Please make sure inputs are vectors. If calling from a data frame, please use the $ operator for 
+    stop("Please make sure inputs are vectors. If calling from a data frame, please use the $ operator for 
     inputing a column as a vector, as this will keep the proper attributes attached to the data")
-    return()
   }
     
   #Check to make sure that time_vec is of classd POSIXct
   if(inherits(time_vec, "POSIXct") == FALSE){
-    cat("Time series data must be of the POSIXct type")
-    return()
+    stop("Time series data must be of the POSIXct type")
   }
   
   #Create data frame to hold our values
