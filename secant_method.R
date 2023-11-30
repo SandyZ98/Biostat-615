@@ -36,12 +36,10 @@ build_up = function(AER, n, Gp, V, C0, C1, delta_t, Cr = 400){
 #'        *next_iter_bound : range bound value if the method fails. Can call the function again with the maximum
 #'        value of range being this value
 secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400, iter_loop = 0){
-  #First, check to make sure that we have not passed 100 recursive iterations. If so, return all zeros and
-  #paste error message to console.
+  #First, check to make sure that we have not passed 100 recursive iterations. If so, return error message.
   if (iter_loop > 100){
-    cat("Escape infinite loop. No appropriate starting conditions for the Secant method were found. Consider
+    stop("Escape infinite loop. No appropriate starting conditions for the Secant method were found. Consider
           increasing the maximum bound of the Air Exchange Rate to be estimated")
-    return(list(start = 0, stop = 0, next_iter_bound = 0))
   }
   
   #Calculate build_up() values for each aer value in range
