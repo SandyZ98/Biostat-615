@@ -47,38 +47,37 @@ secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
   #It is possible the x-axis has been crossed. We need to make sure we haven't picked up the point right before
   #the asymptote, however. So we make sure that f(i) > f(i+1) as this equation will always cross the
   #x axis with a negative slope.
-  
+  #get i and i+1 values
   bup_vals_i = bup_vals[1:length(bup_vals) - 1]
   bup_vals_iplus1 = bup_vals[2:length(bup_vals)]
+  #check to see if cross x-axis between i and i+1
   bup_vals_check = bup_vals_i * bup_vals_iplus1
-  bup_vals_pass_index =  which(bup_vals_check < 0)
+  #get change in build_up() between i and i+1
+  bup_vals_delta_f = bup_vals_iplus1 -  bup_vals_i
+  #Also want to have a shifted version of bup_vals_delta_f, so that we get the delta f of
+  #i+2 - i+1. We want this as we need to make sure that any index that passes is not in a region of exponential
+  #growth. If both the slope from i to i+1 and from i+1 to i+2 are negative, then it is unlikely that
+  #i is in a region of exponential growth. This is important as if i is in a region of exponential growth, then
+  #the secant method will converge to a negaive aer value, which is not appropriate.
+  bup_vals_delta_f_2 = c(bup_vals_delta_f[-1], 0)
+  #Only want the point which crosses the x-axis with a negative slope, with an additional point afterwards
+  #that also has a negative slope
+  bup_vals_pass_index =  which(bup_vals_check < 0 & bup_vals_delta_f < 0 & bup_vals_delta_f_2 < 0)
   
-  #Now that we have our indexes, we check them iteratively to make sure we aren't catching the point at the
-  #asmyptote. This should always be the first value, but we check mathematically just to make sure.
-  #Also, initialize our start and stop values to be returned
+  #Now we either have an index value for bup_vals_pass_index or we don't. If we do, can assign values to index_start
+  #and index_stop, which we initialize as 0 here
   index_start = 0
   index_stop = 0
   
-  #First, we have to check and make sure that bup_vals_pass_index has values. If it doesn't, we need to
-  #skip the this loop or we will get error messages. Can do this by making sure the length is >= 1
-  
   if (length(bup_vals_pass_index) >= 1){
-    #if there are values, iterate and check each value.
-    for (i in bup_vals_pass_index) {
-      if (bup_vals[i] > bup_vals[i + 1]) {
-        index_start = i
-        index_stop = i + 1
-        break
-      }
-    }    
+    index_start = bup_vals_pass_index
+    index_stop = bup_vals_pass_index + 1
   }
-  
-
   
 
   #Now that we have our index values, we can return the values in range which they correspond to! 
   #It is okay if index_start / index_stop are 0, as if this is the case we can return 0 for aer_start
-  #and aer_stop. This will indicate that a smaller iteration value is required.
+  #and aer_stop. This will indicate that a smaller step value is required.
   
   aer_start = 0
   aer_stop = 0
@@ -88,9 +87,25 @@ secant_starter = function(range, n, Gp, V, C0, C1, delta_t, Cr = 400){
     aer_stop = range[index_stop]
   }
   
-  #We want to return the upper bound for the range of the next iteration. We can do this by obtaining the index
-  #of the minimum value, and returning the appropriate aer value of this index + 1. 
-  next_iter_bound = range[which(bup_vals == min(bup_vals)) + 1]
+  #We want to return the upper bound for the range of the next iteration.We want to grab the aer value that
+  #has the largest negative build_up() value / grab the aer value associatied with the negative bulid_up() value with the 
+  #smallest difference from zero. We can do this by generating a vector of negative values, getting the maximum
+  #value, and then obtaining the index from the original list. We then return the appropriate aer value of this index + 1.
+  #We return index + 1 so we don't accidentally prevent having more than 1 negative value next iteration.
+  negative_vals = bup_vals[bup_vals < 0]
+  #However, if negative_vals is empty, we need to recursively call our function with a smaller step size
+  #and return the value from this recursive call.
+  if (length(negative_vals) == 0) {
+    step_size = range[2] - range[1]
+    step_new = step_size / 2
+    #Note that step_new will always be a fraction. Thus, we want to multiply range[1] by step_new
+    new_range = seq((range[1] * step_new), range[length(range)], step_new)
+    return(secant_starter(new_range, n, Gp, V, C0, C1, delta_t, Cr))
+  }
+  #If negative_vals is not empty, we can then get the maximum negative value, get its index, and return the
+  #aer value of that index + 1. We will then take the ceiling of that value, to prevent errors.
+  max_neg_val = max(negative_vals)
+  next_iter_bound = ceiling(range[which(bup_vals == max_neg_val) + 1])
   
   return(list(start = aer_start, stop = aer_stop, next_iter_bound = next_iter_bound))
   
@@ -132,7 +147,7 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
     aer_0 = starter_vals$start
     aer_1 = starter_vals$stop
     #prepare for next loop if valid starter values were not found
-    input_range = seq(input_range[1] / 100, starter_vals$next_iter_bound, input_range[1] / 100)
+    input_range = seq(input_range[1] / 10, starter_vals$next_iter_bound, input_range[1] / 10)
   }
   
   #calculate our function values for build_up()
@@ -143,6 +158,7 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
   delta_aer = -f1 / (f1 - f0)*(aer_1 - aer_0) 
   #interpolate to get our aer_2 value
   aer_2 = aer_1 + delta_aer
+  
   #Now we are ready to iterate! For each iteration
   for(iter in 1:max_iter){
     #check to see if we have reached convergence. If so, we will return aer_2 as our root
@@ -159,7 +175,7 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
     #New change in aer = (f1 / change in f) * change in aer
     delta_aer = -(f1/delta_f)*delta_aer
     #Calculate aer_2 via interpolation
-    aer_2 = aer_1 + delta_aer    
+    aer_2 = aer_1 + delta_aer
   }
   return(list(root=aer_2, f_root = build_up(aer_2, n, Gp, V, C0, C1, delta_t, Cr), iter=iter, convergence=convergence))
   
