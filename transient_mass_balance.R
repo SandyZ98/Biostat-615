@@ -1,3 +1,12 @@
+
+
+# A better way to format persondata and match it to the CO2data?
+# -- currently, persondata needs to start at 0 (first CO2 measurement) and 
+# end at the number of hours from the first to last CO2 measurement. 
+# If it is a 24 hour period, this is pretty simple. If it is >24 hours, 
+# care must be taken to make sure persondata is formatted properly
+
+
 estimate_ventilation <- function(freq, 
                                  CO2, 
                                  volume, 
@@ -172,38 +181,52 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     }
     estimate_E <- TRUE
     nadj_CO2rate <- NULL
-  }
+  }else estimate_E = FALSE
   
   convergence = 0
   Gradient_summand = function(){ # calculates the summands of the gradient
     if(estimate_E){
-      dSSdE <<- 2*(Chat_C*1/Q*(1-q))
+      dSSdE <- 2*(Chat_C*1/Q*(1-q))
+    } else {
+      dSSdE <- 0
     }
-    dSSdQ <<- 2*(Chat_C*derivChat_C)
+    dSSdQ <- 2*(Chat_C*derivChat_C)
     if(estimate_envCO2){
-      dSSdenvCO2 <<- 2*(Chat_C*(-q + 1))
+      dSSdenvCO2 <- 2*(Chat_C*(-q + 1))
+    } else {
+      dSSdenvCO2 <- 0
     }
+    return(list(dSSdE, dSSdQ, dSSdenvCO2))
   }
   Hessian_summand = function(){ # calculates the summands of the hessian
     if(estimate_E){
-      d2SSdE2 <<- 2*((1/Q*(1-q))  ^2)
-      d2SSdEdQ <<- 2*(
+      d2SSdE2 <- 2*((1/Q*(1-q))  ^2)
+      d2SSdEdQ <- 2*(
         Chat_C*(-1/Q^2*(1-q) + 1/Q*(freq/volume)*q) + 
           1/Q*(1-q)*derivChat_C)
+    } else {
+      d2SSdE2 <- 0
+      d2SSdEdQ <- 0
     }
-    d2SSdQ2 <<- 2*(derivChat_C^2 + Chat_C*(
+    d2SSdQ2 <- 2*(derivChat_C^2 + Chat_C*(
       2*E/(Q^3)*(1-q) -
         q * (freq/volume)^2 * (E/Q - Ci_1 + envCO2) + 
         2*E/Q^2 * q *(-freq/volume))) 
     if(estimate_envCO2){
-      d2SSdenvCO22 <<- 2*((1-q)^2)
-      d2SSdQdenvCO2 <<- 2*(
+      d2SSdenvCO22 <- 2*((1-q)^2)
+      d2SSdQdenvCO2 <- 2*(
         Chat_C*(q*freq/volume) +
           (1-q)*derivChat_C)
+    } else {
+      d2SSdenvCO22 <- 0
+      d2SSdQdenvCO2 <- 0
     }
     if(estimate_E & estimate_envCO2){
-      d2SSdEdenvCO2 <<- 2*(1/Q*(1-q)^2)
+      d2SSdEdenvCO2 <- 2*(1/Q*(1-q)^2)
+    } else {
+      d2SSdEdenvCO2 <- 0
     }
+    return(list(d2SSdE2, d2SSdEdQ, d2SSdQ2, d2SSdEdenvCO2, d2SSdQdenvCO2, d2SSdenvCO22))
   }
   
   gradient = c(0) # initialize gradient as vector of length 1 (only estimating Q)
@@ -269,8 +292,17 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     q = exp(-Q/volume*freq)
     #Chat_C = E/Q*(1-q)+(Ci_1 - envCO2)*q + envCO2 - Ci
     derivChat_C =(-E/Q^2)*(1-q) + E/Q*(freq/volume)*q + (Ci_1 - envCO2)*(-freq/volume)*q
-    Gradient_summand()
-    Hessian_summand()
+    gradientres <- Gradient_summand()
+    dSSdE = gradientres[[1]]
+    dSSdQ = gradientres[[2]]
+    dSSdenvCO2 = gradientres[[3]]
+    hessianres <- Hessian_summand()
+    d2SSdE2 = hessianres[[1]]
+    d2SSdEdQ = hessianres[[2]]
+    d2SSdQ2 = hessianres[[3]]
+    d2SSdEdenvCO2 = hessianres[[4]]
+    d2SSdQdenvCO2 = hessianres[[5]]
+    d2SSdenvCO22 = hessianres[[6]]
     gradient[1] = sum(dSSdQ)
     hessian[1,1] = sum(d2SSdQ2)
     if(estimate_E){
@@ -295,17 +327,17 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     delta = solve(hessian)%*%gradient
     
     # update parameters 
-    Qnew = Q - delta[1]
+    Qnew = max(Q - delta[1], 0) # constrain to be positive
     if(estimate_E){
       Enew = rep(0, length(E))
       for(i in 1:length(Eindices)){
         index = Eindices[[i]]
         #Enew[index] = E[index] - delta[i+1]
-        Enew[index] = pmax(E[index] - delta[i+1], 0)
+        Enew[index] = pmax(E[index] - delta[i+1], 0) # constrain to be positive
       }
     }
     if(estimate_envCO2){
-      envCO2new = envCO2 - delta[length(delta)]
+      envCO2new = max(envCO2 - delta[length(delta)], 0) # constrain to be positive
     }
     
     # constraints : envCO2 between 375 and 425, all E >=0, ventilation between 0 and 1000
@@ -334,8 +366,8 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     #   } else conditions_met = FALSE
     # }
       Q = Qnew
-      E = Enew
-      envCO2 = envCO2new
+      if(estimate_E) E = Enew
+      if(estimate_envCO2) envCO2 = envCO2new
       
     Chat_C = E/Q*(1-q)+(Ci_1 - envCO2)*q + envCO2 - Ci
     f1 = Chat_C%*%Chat_C
@@ -362,7 +394,7 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
       
     }
     if(abs(f1-f0)<=tol*(abs(f1)+abs(f0))){
-      convergence = 0
+      convergence = 1
       break
     }
     f0 = f1

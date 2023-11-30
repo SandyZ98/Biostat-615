@@ -1,0 +1,322 @@
+---
+title: "transient mass balance"
+author: "Abby Mauger"
+date: "2023-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+```
+
+Using the first-order exponential integrator, we have
+
+$$ C_{t+1} = E/Q\{1-exp(-Q/V\Delta t)\} + (C_{t}-C_R)exp(-Q/V\Delta t) +C_R $$
+$ E = n * CO2rate $ is the CO2 emission rate in ug/s, $Q$ is the ventilation rate in m3/s, $V$ is the volume of the room in m3, $\Delta t$ is the time step in seconds, $C_R$ is the environmental CO2 concentration in ug/m3, and $C_t$ is the CO2 concentration at time $t$ in ug/m3.
+
+We want to minimize the sum of squares between the predicted CO2 concentration and observed CO2 concentration:
+
+$$ SS = \sum_{i=1}^{n} (\hat{C_{i}} - C_{i})^2 = \sum_{i=1}^{n}(E/Q\{1-exp(-Q/V\Delta t)\} + (C_{i-1}-C_R)exp(-Q/V\Delta t) +C_R) -C_i)^2$$
+
+If $E$, $C$, and $C_R$ are all measured, we can use the Newton-Raphson method to find the value of $Q$ that minimizes the sum of squares.
+
+Each update step of the Newton-Raphson algorithm will be:
+
+$$Q_{t+1} = Q_t - \frac{\frac{\partial SS}{\partial Q}}{\frac{\partial^2SS}{\partial Q^2}}$$
+
+
+Taking the first derivative with respect to Q we get:
+
+$$ \frac{\partial SS}{\partial Q} = \sum_{i=1}^{n} 2(\hat{C_i}-C_i)[(-E/Q^2)(1-exp^{-Q/V\Delta t})+(E/Q + C_R-C_{i-1})
+exp(-Q/V\Delta t)(\Delta t/V)]$$
+
+Define the following:
+
+$$ X = \hat{C_i}-C_i $$
+
+$$ X' = \frac{\partial X}{\partial Q} = (-E/Q^2)(1-exp^{-Q/V\Delta t})+(E/Q + C_R-C_{i-1}) exp(-Q/V\Delta t)\Delta t/V $$
+Then the second derivative with respect to Q is:
+
+$$ \frac{\partial^2SS}{\partial Q^2} = 2\sum_{i=1}^{n} X'^2 + X[2E/Q^3(1-exp(-Q/V \Delta t)) -2E/Q^2exp(-Q/V \Delta t)\Delta t/V - (E/Q + C_R - C_{i-1})exp(-Q/V \Delta t)(\Delta t/V)^2] $$
+
+Let's evaluate the NR method on simulated datasets.
+
+```{r}
+# simulated data for testing
+# consider a 24 hour time period, starting at midnight and running until the following midnight
+# We have 17 people enter at 8 am, leave for one hour at noon, and leave for the day at 5 pm
+# 2 adults and 15 children 
+persondata <- data.frame(
+  time = c(0, 8, 8, 12, 12, 13, 13, 17, 24),
+  n = c(0, 15, 2, 0, 0, 15, 2, 0, 0),
+  age = c(0, 8, 30, 8, 30, 8, 30, 0, 0),
+  gender = rep(NA, 9),
+  MET = c(NA, 3, 1.8, 3, 1.8, 3, 2, NA, NA),
+  CO2rate = rep(NA, 9)
+)
+
+freq=1
+volume=500
+envCO2=400
+temp=25
+
+# function to simulate data then run NR method
+testing_NR <- function(Q, var, init.Q){
+  sim <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = Q, 
+                        CO2var = var,
+                        method='Exponential', 
+                        freq=freq)
+  out <- estimate_ventilation(freq=freq, 
+                     CO2=sim$CO2, 
+                     volume=volume, 
+                     envCO2known=envCO2, 
+                     init.Q=init.Q, 
+                     temp=temp, 
+                     persondata=persondata, 
+                     method='NR', 
+                     max.iter=1000, 
+                     tol=1e-10)
+  return(c(Q.est = out$est_ventilation, iter = out$iter, convergence = out$convergence, Q.true = Q, var = var, Q.init = init.Q))
+}
+
+Q = rep(seq(0.01, 1, .1), 5) # do 5 simulations on each Q
+var = c(.01, .1, 1, 10)
+test_cases = merge(Q, var)
+
+
+out_results = matrix(NA, nrow = nrow(test_cases), ncol = 6)
+colnames(out_results) = c("Q.est", "iter", "convergence", "Q.true", "var", "Q.init")
+for(i in 1:nrow(test_cases)){
+  #print(paste("Running test case", i, "of", nrow(test_cases), "test cases."))
+  out_results[i,] = testing_NR(test_cases[i, 1], test_cases[i, 2], 1)
+}
+```
+
+
+```{r}
+out_results <- as.data.frame(out_results)
+out_results <- out_results %>% mutate(rel.error = abs(Q.est-Q.true)/Q.true)
+summary <- out_results %>% group_by(Q.true, var) %>% summarize(mean.Q.est = mean(Q.est), mean.iter = mean(iter), mean.convergence = mean(convergence), mean.rel.error = mean(rel.error), sd.rel.error = sd(rel.error))
+
+ggplot(summary, aes(x=Q.true, y=mean.rel.error)) +     geom_point() + 
+  geom_line() +  
+  geom_errorbar(aes(ymin=mean.rel.error-sd.rel.error, ymax=mean.rel.error+sd.rel.error), width=.05) + facet_wrap(~paste('Simulated CO2 variance:',var))+
+  labs(x="True Ventilation Rate (m3/s)", y="Relative error in estimated ventilation rate") + theme_bw()
+```
+
+```{r}
+# example of what the simulated data looks like
+sim_example <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = 1, 
+                        CO2var = .01,
+                        method='Exponential', 
+                        freq=freq)
+plot.01 <- ggplot(sim_example, aes(x=time, y=CO2)) + geom_line() + labs(x="Time (hours)", y="CO2 (ppm)") + theme_bw() + ggtitle('CO2 variance = .01')
+sim_example <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = 1, 
+                        CO2var = .1,
+                        method='Exponential', 
+                        freq=freq)
+plot.1 <- ggplot(sim_example, aes(x=time, y=CO2)) + geom_line() + labs(x="Time (hours)", y="CO2 (ppm)") + theme_bw() + ggtitle('CO2 variance = .1')
+sim_example <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = 1, 
+                        CO2var = 1,
+                        method='Exponential', 
+                        freq=freq)
+plot1 = ggplot(sim_example, aes(x=time, y=CO2)) + geom_line() + labs(x="Time (hours)", y="CO2 (ppm)") + theme_bw() + ggtitle('CO2 variance = 1')
+sim_example <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = 1, 
+                        CO2var = 10,
+                        method='Exponential', 
+                        freq=freq)
+plot10 = ggplot(sim_example, aes(x=time, y=CO2)) + geom_line() + labs(x="Time (hours)", y="CO2 (ppm)") + theme_bw() + ggtitle('CO2 variance = 10')
+plot.01+plot.1+plot1+plot10
+
+```
+
+What if we don't observe the CO2 as frequently? We will still simulate a measurement every 1 second, but will only keep one per minute.
+
+```{r}
+# simulated data for testing
+# consider a 24 hour time period, starting at midnight and running until the following midnight
+# We have 17 people enter at 8 am, leave for one hour at noon, and leave for the day at 5 pm
+# 2 adults and 15 children 
+persondata <- data.frame(
+  time = c(0, 8, 8, 12, 12, 13, 13, 17, 24),
+  n = c(0, 15, 2, 0, 0, 15, 2, 0, 0),
+  age = c(0, 8, 30, 8, 30, 8, 30, 0, 0),
+  gender = rep(NA, 9),
+  MET = c(NA, 3, 1.8, 3, 1.8, 3, 2, NA, NA),
+  CO2rate = rep(NA, 9)
+)
+
+freq.sim=1
+freq.est = 60
+volume=500
+envCO2=400
+temp=25
+
+# function to simulate data then run NR method
+testing_NR <- function(Q, var, init.Q){
+  sim <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = Q, 
+                        CO2var = var,
+                        method='Exponential', 
+                        freq=freq.sim)
+  index = seq(1, length(sim$CO2), freq.est)
+  CO2 = sim$CO2[index]
+  out <- estimate_ventilation(freq=freq.est, 
+                     CO2=CO2, 
+                     volume=volume, 
+                     envCO2known=envCO2, 
+                     init.Q=init.Q, 
+                     temp=temp, 
+                     persondata=persondata, 
+                     method='NR', 
+                     max.iter=1000, 
+                     tol=1e-10)
+  return(c(Q.est = out$est_ventilation, iter = out$iter, convergence = out$convergence, Q.true = Q, var = var, Q.init = init.Q))
+}
+
+Q = rep(seq(0.01, 1, .1), 5) # do 5 simulations on each Q
+var = c(.01, .1, 1, 10)
+test_cases = merge(Q, var)
+
+
+out_results = matrix(NA, nrow = nrow(test_cases), ncol = 6)
+colnames(out_results) = c("Q.est", "iter", "convergence", "Q.true", "var", "Q.init")
+for(i in 1:nrow(test_cases)){
+  #print(paste("Running test case", i, "of", nrow(test_cases), "test cases."))
+  out_results[i,] = testing_NR(test_cases[i, 1], test_cases[i, 2], 1)
+}
+
+out_results <- as.data.frame(out_results)
+out_results <- out_results %>% mutate(rel.error = abs(Q.est-Q.true)/Q.true)
+summary <- out_results %>% group_by(Q.true, var) %>% summarize(mean.Q.est = mean(Q.est), mean.iter = mean(iter), mean.convergence = mean(convergence), mean.rel.error = mean(rel.error), sd.rel.error = sd(rel.error))
+
+ggplot(summary, aes(x=Q.true, y=mean.rel.error)) +     geom_point() + 
+  geom_line() +  
+  geom_errorbar(aes(ymin=mean.rel.error-sd.rel.error, ymax=mean.rel.error+sd.rel.error), width=.05) + facet_wrap(~paste('Simulated CO2 variance:',var))+
+  labs(x="True Ventilation Rate (m3/s)", y="Relative error in estimated ventilation rate") + theme_bw()
+```
+
+
+Perhaps the environmental CO2 and/or emission rates are not measured. We can use a multi-dimensional optimization method to estimate Q, environmental CO2, and/or emission rates.
+
+(insert equations here)
+
+Let's see how it performs on simulated data:
+
+```{r}
+freq=1
+volume=500
+envCO2=400
+Q = .25
+temp =25
+
+# let's use simplified person data: people enter at 8 am and leave at 5 pm
+persondata <- data.frame(
+  time = c(0, 8, 8, 17, 24),
+  n = c(0, 15, 2, 0, 0),
+  age = c(0, 8, 30, 0, 0),
+  gender = rep(NA, 5),
+  MET = c(NA, 3, 1.8, NA, NA),
+  CO2rate = rep(NA, 5)
+)
+
+critpoints = c(3600/freq*8, 3600/freq*17)
+simdata <- simulateData(persondata = persondata,
+                        volume=volume, 
+                        ventilation_rate = Q, 
+                        envCO2=envCO2,
+                        startCO2=envCO2,
+                        CO2var = 1,
+                        method='Exponential', 
+                        freq=freq)
+
+ggplot(simdata, aes(x=time, y=CO2)) + geom_line() + labs(x="Time (hours)", y="CO2 (ppm)") + theme_bw() 
+
+
+# testing Newton method
+true_emissions <- persondata_to_emission(persondata, temp, freq)
+true_emission_rates <- unique(true_emissions$nadj_CO2rate)
+
+# testing with trying to estimate emission rates: doesn't work very well
+# test <- estimate_ventilation(freq=freq, 
+#                      CO2=simdata$CO2, 
+#                      volume=volume, 
+#                      init.Q=.25, 
+#                      temp=temp, 
+#                      critpoints=critpoints,
+#                      method='Newton', 
+#                      max.iter=1000, 
+#                      tol=1e-6,
+#                      E.init=c(0, 26.27, 0),
+#                      envCO2.init = c(400), verbose=T)
+# test
+
+test2 <- estimate_ventilation(freq=freq, 
+                     CO2=simdata$CO2, 
+                     persondata=persondata,
+                     critpoints=NULL,
+                     volume=volume, 
+                     init.Q=.5, 
+                     temp=temp, 
+                     method='Newton', 
+                     max.iter=1000, 
+                     tol=1e-6,
+                     envCO2.init = c(450), verbose=T)
+```
+
+```{r}
+# load data for testing
+data = readxl::read_excel("Aranet4 0C1B8_2023-11-15T18_47_56-0500.xlsx")
+data2 = readxl::read_excel("Aranet4 17877_2023-11-15T18_49_59-0500.xlsx")
+times = data$`Time(dd/mm/yyyy)`
+times = as.POSIXct(times, format = "%d/%m/%Y %I:%M:%S %p")
+times2 = as.POSIXct(data2$`Time(dd/mm/yyyy)`, format = "%d/%m/%Y %I:%M:%S %p")
+CO2 = data$`Carbon dioxide(ppm)`
+CO22 = data2$`Carbon dioxide(ppm)`
+
+ggplot(data=data.frame(times=times, CO2=CO2), aes(x=times, y=CO2)) + 
+  geom_line()
+
+ggplot(data=data.frame(times=times2, CO2=CO22), aes(x=times, y=CO2)) + 
+  geom_line()
+
+# fake persondata
+persondata <- data.frame(
+  time = c(0, 5, 18, 27, 40, 49, 55.03),
+  n = c(6, 0, 6, 0, 6, 0, 0)
+)
+
+volume = .0254^3*321*378*114
+envCO2 = 400
+
+# 6 ACH minimum ventilation when occupied
+
+# ACHPH = 3600Q/Volume
+
+realdata <- estimate_ventilation(freq=120, 
+                     CO2=CO2, 
+                     volume=volume, 
+                     envCO2=envCO2, 
+                     init.Q=1, 
+                     temp=temp, 
+                     persondata=persondata, 
+                     method='NR', 
+                     max.iter=1000, 
+                     tol=1e-10)
+
+realdata$est_ventilation/volume*3600
+```
