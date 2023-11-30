@@ -1,3 +1,20 @@
+#'exp_periods() Identify periods of exponential growth / decay from time series CO2 data
+#'@param time_vec : Vector of time values. Must have POSIXct attribute. Must call in vectors
+#'from dataframes using the $ operator so that the data keeps the POSIXct attribute
+#'@param co2_vec : Vector of CO2 values. Must be in ppm, although there is no way for the
+#'program to check this
+#'@param quant_cutoff : Percentile cutoff for identifying exponential periods. Variance within
+#'the CO2 values p index values to the left and right is calculated. High values of variance indicate
+#'an exponential period. Percentile based cutoff is made to identify these high values, and therefore,
+#'the exponential periods. A higher value for this cutoff is more strict, and may identify less exponential
+#'periods. A lower values for this cutoff is less strict, and may identify more exponential periods.
+#'@returns a data frame with the following columns:
+#'        *Index Start : Index value for the start of the exponential period
+#'        *Index Stop : Index value for the stop of the exponential period
+#'        *Type : Type of Exponential period. Either Growth or Decay
+#'        *Time Start : The POSIXct string time representation of the start time
+#'        *Time Stop : The POSIXct string time representation of the stop time
+
 exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   #we are allowing for data to be input as a data frame using the data argument. If data == None, then we have two vector inputs
   #for our carbon dioxide / time data. Time data must be of the class POSIXct. Quant_cutoff is the decimal representation of
@@ -11,7 +28,8 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   
   #Check to make sure they are one dimensional
   if((!is.null(dim(time_vec)) | (!is.null(dim(co2_vec))) )){
-    cat("Please make sure inputs are vectors if not using data argument")
+    cat("Please make sure inputs are vectors. If calling from a data frame, please use the $ operator for 
+    inputing a column as a vector, as this will keep the proper attributes attached to the data")
     return()
   }
     
@@ -95,8 +113,8 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   data$'Interval Var' = p_var[, paste(p)]
   data$'Interval Slope' = p_slope[, paste(p)]
   
-  #save cutoff value. I think 90% is reasonable, can add as argument in function call
-  cutoff = quantile(data$`Interval Var`, probs = 0.9)
+  #save cutoff value based on argument input.
+  cutoff = quantile(data$`Interval Var`, probs = quant_cutoff)
   
   #Create data frame to hold our exponential growth and decay periods
   useful_data = data.frame("Index Start" = c(), "Index Stop" = c(), "Type" = c(), "Time Start" = c(), "Time Stop" = c())
