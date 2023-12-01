@@ -105,8 +105,6 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
   #interpolate to get our aer_2 value
   aer_2 = aer_1 + delta_aer
   
-  cat(aer_0, aer_1, aer_2, sep = "\n")
-  
   #Now we are ready to iterate! For each iteration
   for(iter in 1:max_iter){
     #check to see if we have reached convergence. If so, we will return aer_2 as our root
@@ -124,7 +122,6 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
     delta_aer = -(f1/delta_f)*delta_aer
     #Calculate aer_2 via interpolation
     aer_2 = aer_1 + delta_aer
-    cat(aer_2, "\n", sep = '')
   }
   
   return(list(root=aer_2, 
