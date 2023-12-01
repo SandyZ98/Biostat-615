@@ -90,8 +90,7 @@ secant_method = function(n, Gp, V, C0, C1, delta_t, Cr = 400,tol=1e-10,max_iter=
   #set convergence to 1
   convergence = 1
   
-  #First, we need to find appropriate starting conditions for the method.200 is a very
-  #generous upper bound. We just want to make sure we aren't missing the AER solution
+  #First, we need to find appropriate starting conditions for the method.
   starter_vals = secant_starter(n, Gp, V, C0, C1, delta_t, Cr)
   aer_0 = starter_vals$start
   aer_1 = starter_vals$stop
