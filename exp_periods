@@ -16,24 +16,24 @@
 #'        *Time Stop : The POSIXct string time representation of the stop time
 
 exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
-  #we are allowing for data to be input as a data frame using the data argument. If data == None, then we have two vector inputs
-  #for our carbon dioxide / time data. Time data must be of the class POSIXct. Quant_cutoff is the decimal representation of
-  #the quantile cutoff for variance. The base value is 0.9. We will first make sure that the input variables are of the
-  #correct format
+  #We have two vector inputs. One for our carbon dioxide data, one for our time data. Time data must be of the class POSIXct.
+  #Quant_cutoff is the decimal representation of the quantile cutoff for variance. The base value is 0.9. 
+  #We will first make sure that the input variables are of the correct format
   
   if(abs(quant_cutoff) > 1){
-    stop("quant_cutoff must be a value between 0 and 1")
+    stop("quant_cutoff must be a value between 0 and 1.")
   }
   
   #Check to make sure they are one dimensional
   if((!is.null(dim(time_vec)) | (!is.null(dim(co2_vec))) )){
     stop("Please make sure inputs are vectors. If calling from a data frame, please use the $ operator for 
-    inputing a column as a vector, as this will keep the proper attributes attached to the data")
+    inputing a column as a vector, as this will keep the proper attributes attached to the data.")
   }
     
-  #Check to make sure that time_vec is of classd POSIXct
+  #Check to make sure that time_vec is of class POSIXct
   if(inherits(time_vec, "POSIXct") == FALSE){
-    stop("Time series data must be of the POSIXct type")
+    stop("Time series data must be of the POSIXct type.If calling from a data frame, please use the $ operator for 
+    inputing a column as a vector, as this will keep the proper attributes attached to the data.")
   }
   
   #Create data frame to hold our values
