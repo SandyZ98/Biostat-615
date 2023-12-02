@@ -240,7 +240,7 @@ simdata <- simulateData(persondata = persondata,
                         ventilation_rate = Q, 
                         envCO2=envCO2,
                         startCO2=envCO2,
-                        CO2var = 1,
+                        CO2var = 0,
                         method='Exponential', 
                         freq=freq)
 
@@ -252,18 +252,18 @@ true_emissions <- persondata_to_emission(persondata, temp, freq)
 true_emission_rates <- unique(true_emissions$nadj_CO2rate)
 
 # testing with trying to estimate emission rates: doesn't work very well
-# test <- estimate_ventilation(freq=freq, 
-#                      CO2=simdata$CO2, 
-#                      volume=volume, 
-#                      init.Q=.25, 
-#                      temp=temp, 
-#                      critpoints=critpoints,
-#                      method='Newton', 
-#                      max.iter=1000, 
-#                      tol=1e-6,
-#                      E.init=c(0, 26.27, 0),
-#                      envCO2.init = c(400), verbose=T)
-# test
+test <- estimate_ventilation(freq=freq,
+                     CO2=simdata$CO2,
+                     volume=volume,
+                     init.Q=.25,
+                     temp=temp,
+                     critpoints=critpoints,
+                     method='Newton',
+                     max.iter=1000,
+                     tol=1e-6,
+                     E.init=c(0, 26.3, 0),
+                     envCO2known=400, verbose=T)
+test
 
 test2 <- estimate_ventilation(freq=freq, 
                      CO2=simdata$CO2, 
@@ -276,6 +276,17 @@ test2 <- estimate_ventilation(freq=freq,
                      max.iter=1000, 
                      tol=1e-6,
                      envCO2.init = c(450), verbose=T)
+
+test3 <- estimate_ventilation(freq=freq, 
+                     CO2=simdata$CO2, 
+                     critpoints=critpoints,
+                     volume=volume, 
+                     init.Q=.5, 
+                     temp=temp, 
+                     method='Newton', 
+                     max.iter=1000, 
+                     tol=1e-6,
+                     envCO2known =envCO2, verbose=T)
 ```
 
 ```{r}
@@ -294,29 +305,115 @@ ggplot(data=data.frame(times=times, CO2=CO2), aes(x=times, y=CO2)) +
 ggplot(data=data.frame(times=times2, CO2=CO22), aes(x=times, y=CO2)) + 
   geom_line()
 
-# fake persondata
-persondata <- data.frame(
-  time = c(0, 5, 18, 27, 40, 49, 55.03),
-  n = c(6, 0, 6, 0, 6, 0, 0)
+periods1 <- exp_periods(times, CO2, quant_cutoff=.9)
+periods1$timediff = difftime(periods1$Time.Start, times[1], units='hours')
+# remove redundancies
+periods1 <- periods1[c(1,3,5,6,7,8,9,10,11,14,15,16),]
+
+periods2 <- exp_periods(times2, CO22, quant_cutoff = .95)
+periods2$timediff = difftime(periods2$Time.Start, times2[1], units='hours')
+periods2 <- periods2[c(1, 2, 4, 5, 8, 9, 12, 13, 15, 17, 18, 19, 21),]
+
+# fake persondata based on exponential periods
+persondata1 <- data.frame(
+  time = c(as.numeric(periods1$timediff), as.numeric(difftime(times[length(times)], times[1], unit='hours'))),
+  n = c(3*as.numeric(periods1$Type=='Growth'), 0)
 )
+
+persondata2 <- data.frame(
+  time = c(0, as.numeric(periods2$timediff), as.numeric(difftime(times2[length(times2)], times2[1], unit='hours'))),
+  n = c(0, 3*as.numeric(periods2$Type=='Growth'), 0)
+)
+# update with exponential periods and use n=3
 
 volume = .0254^3*321*378*114
 envCO2 = 400
+temp=25
 
 # 6 ACH minimum ventilation when occupied
 
 # ACHPH = 3600Q/Volume
 
 realdata <- estimate_ventilation(freq=120, 
-                     CO2=CO2, 
+                     CO2=CO22, 
                      volume=volume, 
-                     envCO2=envCO2, 
+                     envCO2known=400, 
                      init.Q=1, 
                      temp=temp, 
-                     persondata=persondata, 
+                     persondata=persondata2, 
                      method='NR', 
                      max.iter=1000, 
                      tol=1e-10)
 
 realdata$est_ventilation/volume*3600
+
+realdata_Newton <- estimate_ventilation(freq=120, 
+                     CO2=CO22, 
+                     volume=volume,
+                     init.Q=1, 
+                     temp=temp, 
+                     persondata=persondata2, 
+                     method='Newton', 
+                     max.iter=1000, 
+                     envCO2.init=400,
+                     tol=1e-6, verbose=T)
+
+realdata_Newton$ventilation/volume*3600
+
+ug_to_ppm <- function(ug, temp) {
+    ug * 44.01 * 1000 * 101.325 / 8314 / (273.15+temp)
+  }
+ug_to_ppm(realdata_Newton$envCO2, 25)
+
+realdata_Newton_estE <- estimate_ventilation(freq=120, 
+                     CO2=CO22, 
+                     volume=volume,
+                     init.Q=1, 
+                     temp=temp, 
+                     critpoints= periods2$Index.Start,
+                     method='Newton', 
+                     max.iter=1000, 
+                     envCO2.init=500,
+                     tol=1e-6, verbose=T)
+realdata_Newton_estE$ventilation*3600/volume
+ug_to_ppm(realdata_Newton_estE$envCO2, 25)
+realdata_Newton_estE$E
+
+ggplot(data=data.frame(times=times, CO2=CO2, est_E = c(realdata_Newton_estE$E,0)), aes(x=times, y=CO2, color=est_E)) + 
+  geom_line() + 
+  geom_smooth()
+
+loess_curve <- loess(CO2 ~as.numeric(times), span=.20, degree=2 )
+plot(loess_curve$x, loess_curve$fitted)
+plot(as.numeric(times), CO2)
+
+# extract locations of local minima and maxima in loess curve fitted values
+maxima <- which(diff(sign(diff(loess_curve$fitted)))==-2)+1
+minima <- which(diff(sign(diff(loess_curve$fitted)))==2)+1
+critpoints <- c(maxima, minima)
+
+ggplot(data=data.frame(times=times, CO2=CO2), aes(x=times, y=CO2)) + 
+  geom_line() + 
+  geom_smooth(method='loess', span=.2) + 
+  geom_vline(xintercept=times[critpoints], color='red')
+
+ggplot(data=data.frame(times=times, CO2=loess_curve$fitted), aes(x=times, y=CO2)) + 
+  geom_line() + 
+  geom_vline(xintercept=times[critpoints], color='red')
+
+
+
+realdata_Newton_estE <- estimate_ventilation(freq=120, 
+                     CO2=CO22, 
+                     volume=volume,
+                     init.Q=1, 
+                     temp=temp, 
+                     critpoints= sort(critpoints),
+                     method='Newton', 
+                     max.iter=1000, 
+                     envCO2.init=400,
+                     tol=1e-6, verbose=T)
+realdata_Newton_estE$ventilation*3600/volume
+ug_to_ppm(realdata_Newton_estE$envCO2, 25)
+realdata_Newton_estE$E
 ```

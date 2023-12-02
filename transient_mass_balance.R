@@ -164,12 +164,12 @@ estimate_ventilation <- function(freq,
                         verbose=verbose, record.steps=record.steps, 
                         critpoints=critpoints, nadj_CO2rate=nadj_CO2rate,
                         CO2=CO2, init.Q=init.Q, envCO2known=envCO2known,
-                        E.init = E.init, envCO2.init = envCO2.init))
+                        E.init = E.init, envCO2.init = envCO2.init, freq=freq))
   }
 }
 
 multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critpoints,
-                         nadj_CO2rate, CO2, init.Q, envCO2known, E.init, envCO2.init){
+                         nadj_CO2rate, CO2, init.Q, envCO2known, E.init, envCO2.init, freq){
   if(is.null(envCO2known)){
     estimate_envCO2 <- TRUE
   }else{
@@ -327,7 +327,7 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     delta = solve(hessian)%*%gradient
     
     # update parameters 
-    Qnew = max(Q - delta[1], 0) # constrain to be positive
+    Qnew = max(Q - delta[1], 1e-6) # constrain to be positive
     if(estimate_E){
       Enew = rep(0, length(E))
       for(i in 1:length(Eindices)){
