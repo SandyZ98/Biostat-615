@@ -401,6 +401,11 @@ ggplot(data=data.frame(times=times, CO2=loess_curve$fitted), aes(x=times, y=CO2)
   geom_line() + 
   geom_vline(xintercept=times[critpoints], color='red')
 
+times3 = difftime(times2[sort(critpoints)], times2[1], units='hours')
+persondata3 <- data.frame(
+  time = c(0, as.numeric(times3), as.numeric(difftime(times2[length(times2)], times2[1], unit='hours'))),
+  n = c(3, 0, 3, 3, 0, 0, 3, 0, 3, 0, 3, 0,0)
+)
 
 
 realdata_Newton_estE <- estimate_ventilation(freq=120, 
@@ -408,10 +413,10 @@ realdata_Newton_estE <- estimate_ventilation(freq=120,
                      volume=volume,
                      init.Q=1, 
                      temp=temp, 
-                     critpoints= sort(critpoints),
+                     persondata=persondata3,
                      method='Newton', 
                      max.iter=1000, 
-                     envCO2.init=400,
+                     envCO2.init=600,
                      tol=1e-6, verbose=T)
 realdata_Newton_estE$ventilation*3600/volume
 ug_to_ppm(realdata_Newton_estE$envCO2, 25)
