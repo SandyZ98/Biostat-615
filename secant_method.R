@@ -376,15 +376,14 @@ secant_method = function(aer = NA, n = NA, Gp = NA, V = NA, C0, C1, delta_t, Cr 
 #'from dataframes using the $ operator so that the data keeps the POSIXct attribute
 #'@param co2_vec : Vector of CO2 values. Must be in ppm, although there is no way for the
 #'program to check this
-#' @param aer : Air Exchange Rate ( 1 / hour)
+#' @param aer : Air Exchange Rate ( 1 / hour). Can be input as a single value or vector, depending on size of n.
 #' @param n : number of individuals. If known, will either be input as a number. This will mean that n is
 #' assumed to be constant. If time varying, then n will be a mxp matrix. Each time that n changes, another
 #' row will be added. Thus, with x changes in n, m = x + 1. p will represent each type of individual in the
-#' room. n[m,p] will give the number of individuals of type p for the current population. If Gp is not being
-#' estimated, the length of Gp must equal p.
+#' room. n[m,p] will give the number of individuals of type p for the current population.
 #' @param Gp : Average age-adjusted CO2 generation rate (L / (min·person)). The length of this vector must be equal
-#' to the number of columns of n, if not being estimated.
-#' @param V : Room volume in meters cubed
+#' to either the number of columns of n, rows of n, or be a matrix of the same size of n, depending on the input of n.
+#' @param V : Room volume in meters cubed. Can be input as a single value or vector, depending on size of n.
 #' @param n_change : This vector is a vector of time values. Must have POSIXct attribute. Must call in vectors
 #'from dataframes using the $ operator so that the data keeps the POSIXct attribute. This vector will represent
 #'the times at which the number of people in the room change. If n = NA, will make it so that n_change must be
@@ -404,6 +403,9 @@ secant_method = function(aer = NA, n = NA, Gp = NA, V = NA, C0, C1, delta_t, Cr 
 #'        *period_data : returns the period_data_final data frame. Useful to get the distribution of the parameter
 #'        estimates, and additional information on regions of estimation and diagnostic information from
 #'        the root finding method.
+#'        *parameters : returns information on the parameter arguments used while calling secant_method
+#'        Each row corresponds to the chronological change in parameters. Will always be at least one row,
+#'        which represents the parameters at time = 0.
 secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_change = NA, 
                        quant_cutoff = 0.9, Cr = 400, tol=1e-10, max_iter=1000){
   
@@ -416,11 +418,11 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   #variables, as we can use these variables to check for 2.
   
   #Need to call all so that we get a singular value. Only considered NA if all values are NA. Although, no NA values
-  #should be present in n or Gp if they have arguments passed that are not NA.
+  #should be present in non-estimated arguments.
   e_n = all(is.na(n)) 
   e_Gp = all(is.na(Gp))
-  e_V = is.na(V)
-  e_aer = is.na(aer)
+  e_V = all(is.na(V))
+  e_aer = all(is.na(aer))
   
   num_NA = sum(e_n, e_Gp, e_V, e_aer)
   
@@ -444,16 +446,12 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
          the time_vec argument.")
   }
   
-  
-  #Here we check to make sure that aer and volume are only ever input as a single number or NA. Both cases
-  #can be determined by checking if the length is greater than one. If inappropriate arguments are passed,
-  #return an error message
-  if (length(aer) > 1 | length(V) > 1){
-    stop("Air Exchange Rate and Volume arguments may only be input as a single number. This function does not support
-         Changes in the Air Exchange Rate or Room Volume. Ensure that these arguments do not have a length greater
-         than one.")
+  #aer and V should never be input as a higher dimensional object than a vector. Thus, dim(aer) and dim(V) should
+  #always be NULL
+  if (!is.null(dim(aer)) | !is.null(dim(V))){
+    stop("Air Exchange Rate and Volume inputs can not have an input that has a higher dimension than one. Inputs are
+         only accepted as a single value or a vector of values.")
   }
-  
   
   #The rest of our input checks revolve around if n is being estimated or not, and the dimensions of n if given as an input
   #if n is being estimated
@@ -466,13 +464,15 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       n_change = NA
     }
     
-    #If there are multiple values for Gp, simply take the average of the input values. Return a warning stating
-    if (length(Gp) > 1) {
-      warning("When the number of individuals is being estimated, the average value of Gp inputs will be used.
+    #If there are multiple values for Gp, aer, or V, simply take the average of the input values. Return a warning stating
+    if (length(Gp) > 1 | length(aer) > 1 | length(V) > 1) {
+      warning("When the number of individuals is being estimated, the average value of Gp, aer, and V inputs will be used.
               If information on the proportion of indivdiuals in the room is available, using a weighted Gp value
               for the Gp argument would be best. Continuing the current estimation with the average of input
-              Gp values")
+              Gp, aer, and Volume values")
       Gp = mean(Gp)
+      aer = mean(aer)
+      V = mean(V)
     }
   }else {
     #if n is not being estimated, need to get the dimensions of n
@@ -501,10 +501,15 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
               entry must correspond to the time at which the number of indidivuals in the room changed. Like with
               n, the first entry will always correspond to time 0.
                 
-              If n is input as a matrix, Gp must be a vector whose length is the number of columns of n. Each
+              If n is input as a matrix with one row, Gp must be a vector whose length is the number of columns of n. Each
               entry will correspond to the appropriate Gp value for each group / type of individual in the room.
-              The index entries of Gp will correspond with the column index of n. If Gp is being estimated, then
-              a gp value for each category will be returned.
+              The index entries of Gp will correspond with the column index of n.
+              
+              If n is input as a matrix with one column, Gp must be a vector whose length is the number of rows in n.
+              Each entry will correspond to the appropriate Gp value at each time.
+              
+              if n is input as an ixj matrix, Gp must also be input as an ixj matrix, where rows denote time states
+              and columns denote individual groups / types.
              
               Properly format the n argument.")
         stop("See above for full error message")
@@ -514,7 +519,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       n_col = dim(n)[2]
       
       #If n_row == 1, this means that the number of individuals in the room doesn't change. n_change should not have
-      #an argument value. If an argument was passed for n_change, .
+      #an argument value. aer and V must only be input as a single number. Length of Gp must equal the number of 
+      #columns in n.
       
       if(n_row == 1){
         if (!all(is.na(n_change))){
@@ -522,11 +528,27 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                   estimation and ignoring n_change values.")
           n_change = NA
         }
-      }
-      
-      #check dimensions of n_change, stop function and return error message
-      if (n_row != length(n_change) & n_row > 1){
-        cat("Requirements for a matrix input of n are as follows: Note that n must be 2 dimensions only.
+        
+        if (length(aer) > 1 | length(V) > 1) {
+          warning("When the number of individuals is constant, the average value of aer and V inputs will be used.
+          Continuing the current estimation with the average of input aer and Volume values")
+          aer = mean(aer)
+          V = mean(V)
+        }
+        
+        if (length(Gp) != n_col & !e_Gp){
+          stop("When n and Gp are both input as arguments, and parameters are constant throughout the input time
+               period, the number of columns of n must equal the length of the input of Gp.
+               
+               Properly format the Gp argument. In this case, ensure that the input is a vector the same length
+               as the number of columns as the n argument.")
+        }
+        
+      }else{ #if n_row > 1
+        
+        #check dimensions of n_change, stop function and return error message
+        if (n_row != length(n_change)){
+          cat("Requirements for a matrix input of n are as follows: Note that n must be 2 dimensions only.
                 
               Each row of n should hold information on the number of individuals in the room whenever n changes.
               The first row will always correspond to the values at time 0. If there are i changes in the number
@@ -541,18 +563,30 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
               entry must correspond to the time at which the number of indidivuals in the room changed. Like with
               n, the first entry will always correspond to time 0.
                 
-              If n is input as a matrix, Gp must be a vector whose length is the number of columns of n. Each
+              If n is input as a matrix with one row, Gp must be a vector whose length is the number of columns of n. Each
               entry will correspond to the appropriate Gp value for each group / type of individual in the room.
-              The index entries of Gp will correspond with the column index of n. If Gp is being estimated, then
-              a gp value for each category will be returned.
+              The index entries of Gp will correspond with the column index of n.
+              
+              If n is input as a matrix with one column, Gp must be a vector whose length is the number of rows in n.
+              Each entry will correspond to the appropriate Gp value at each time.
+              
+              if n is input as an ixj matrix, Gp must also be input as an ixj matrix, where rows denote time states
+              and columns denote individual groups / types.
              
               Properly format the n_change argument.")
-        stop("See above for full error message")
-      }
-      
-      #check dimensions of Gp, return error message. Only applicable if Gp is not being estimated
-      if ((n_col != length(Gp)) & !e_Gp){
-        cat("Requirements for a matrix input of n are as follows: Note that n must be 2 dimensions only.
+          stop("See above for full error message")
+        }
+        
+        #check dimensions of Gp, return error message. Only applicable if Gp is not being estimated
+        
+        #If Gp is not being estimated
+        if (!e_Gp){
+          
+          #If there there is only one column, then the length of Gp must = n_row, so that there is a singular
+          #Gp value at each time point
+          if(n_col == 1){
+            if (n_row != length(Gp)){
+              cat("Requirements for a matrix input of n are as follows: Note that n must be 2 dimensions only.
                 
               Each row of n should hold information on the number of individuals in the room whenever n changes.
               The first row will always correspond to the values at time 0. If there are i changes in the number
@@ -567,22 +601,83 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
               entry must correspond to the time at which the number of indidivuals in the room changed. Like with
               n, the first entry will always correspond to time 0.
                 
-              If n is input as a matrix, Gp must be a vector whose length is the number of columns of n. Each
+              If n is input as a matrix with one row, Gp must be a vector whose length is the number of columns of n. Each
               entry will correspond to the appropriate Gp value for each group / type of individual in the room.
-              The index entries of Gp will correspond with the column index of n. If Gp is being estimated, then
-              a gp value for each category will be returned.
-             
-              Properly format the Gp argument.")
-        stop("See above for full error message")
-      }
-      
-      #Check to make sure that n_change is of class POSIXct
-      if(inherits(n_change, "POSIXct") == FALSE & n_row > 1){
-        stop("Time series data must be of the POSIXct type.If calling from a data frame, please use the $ operator for 
+              The index entries of Gp will correspond with the column index of n.
+              
+              If n is input as a matrix with one column, Gp must be a vector whose length is the number of rows in n.
+              Each entry will correspond to the appropriate Gp value at each time.
+              
+              if n is input as an ixj matrix, Gp must also be input as an ixj matrix, where rows denote time states
+              and columns denote individual groups / types.
+              
+              Properly format the Gp argument. In this case, Gp must be input as vector whose length equals the
+                  number of rows in n.")
+              stop("See above for full error message")
+            }
+          }else{#If there is more than one column in n, Gp must be input as a matrix. In this case, the dimensions
+            #of n and Gp must be the same.
+            if (!all(dim(n) == dim(Gp)) | is.null(dim(Gp))) {
+              cat("Requirements for a matrix input of n are as follows: Note that n must be 2 dimensions only.
+                
+              Each row of n should hold information on the number of individuals in the room whenever n changes.
+              The first row will always correspond to the values at time 0. If there are i changes in the number
+              of individuals, n will have i + 1 rows. The sum of each row will total the total number of people
+              in the room at any given time.
+                
+              The number of columns corresponds to the number of categories of individuals there are in the room. 
+              For example, if adults and children are the two groups, then n should have two columns.
+                
+              If n is input as a matrix, n_change must be input as a vector whose length is the number of
+              rows of n. n_change must be a vector whose entries are time values of the class POSIXct. Each
+              entry must correspond to the time at which the number of indidivuals in the room changed. Like with
+              n, the first entry will always correspond to time 0.
+                
+              If n is input as a matrix with one row, Gp must be a vector whose length is the number of columns of n. Each
+              entry will correspond to the appropriate Gp value for each group / type of individual in the room.
+              The index entries of Gp will correspond with the column index of n.
+              
+              If n is input as a matrix with one column, Gp must be a vector whose length is the number of rows in n.
+              Each entry will correspond to the appropriate Gp value at each time.
+              
+              if n is input as an ixj matrix, Gp must also be input as an ixj matrix, where rows denote time states
+              and columns denote individual groups / types.
+              
+              Properly format the Gp argument. In this case, Gp must be input as a matrix of the same dimensions as n.")
+              stop("See above for full error message")
+            }
+          }
+        }
+        
+        #Check dimensions of aer. Only applicable if aer is not being estimated
+        if (!e_aer){
+          #At this point, if the length of aer does not equal the number of rows in n, return an error message
+          if (length(aer) != n_row) {
+            stop("If the number of rows of n is greater than one, then the length of the aer input must equal
+                 the number of rows in n.
+                 
+                 Properly format the aer argument")
+          }
+        }
+        
+        #Check dimensions of V. Only applicable if V is not being estimated
+        if (!e_V){
+          #At this point, if the length of aer does not equal the number of rows in n, return an error message
+          if (length(V) != n_row) {
+            stop("If the number of rows of n is greater than one, then the length of the Volume input must equal
+                 the number of rows in n.
+                 
+                 Properly format the V argument")
+          }
+        }
+        
+        #Check to make sure that n_change is of class POSIXct. Only need to do if nrow > 1
+        if(inherits(n_change, "POSIXct") == FALSE){
+          stop("Time series data must be of the POSIXct type.If calling from a data frame, please use the $ operator for 
              inputing a column as a vector, as this will keep the proper attributes attached to the data. Properly format
              the n_change argument.")
+        }
       }
-      
     }else{ #else, n is input as a single value. 
       
       #Check if n_change = NA. If not, return a message stating that when n
@@ -606,17 +701,33 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                 entry must correspond to the time at which the number of indidivuals in the room changed. Like with
                 n, the first entry will always correspond to time 0.
                 
-                If n is input as a matrix, Gp must be a vector whose length is the number of columns of n. Each
+                If n is input as a matrix with one row, Gp must be a vector whose length is the number of columns of n. Each
                 entry will correspond to the appropriate Gp value for each group / type of individual in the room.
-                The index entries of Gp will correspond with the column index of n. If Gp is being estimated, then
-                a gp value for each category will be returned.")
+                The index entries of Gp will correspond with the column index of n.
+              
+                If n is input as a matrix with one column, Gp must be a vector whose length is the number of rows in n.
+                Each entry will correspond to the appropriate Gp value at each time.
+              
+                if n is input as an ixj matrix, Gp must also be input as an ixj matrix, where rows denote time states
+                and columns denote individual groups / types.")
         warning("See above for full warning message")
         n_change = NA
       }
       
+      #Check dimensions of aer, V, and Gp. These should not have a length greater than one.
+      if (length(Gp) > 1 | length(aer) > 1 | length(V) > 1) {
+        warning("When the number of individuals constant and there is no heterogeneity of Gp values, the average value of 
+        #Gp, aer, and V inputs will be used. If information on the proportion of indivdiuals in the room is available, 
+        #using a weighted Gp value for the Gp argument would be best. Continuing the current estimation with the average
+        #of input Gp, aer, and Volume values")
+        Gp = mean(Gp)
+        aer = mean(aer)
+        V = mean(V)
+      }
+      
     }
-    
-  } 
+      
+  }
   
   
   #This concludes the logic behind arguments passed to the function. To prevent errors in further code, if nchange
@@ -628,10 +739,10 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   #I lied, one last check. At this point, n_change[1] should always equal time_vec[1]. If this is not the case,
   #return an error message
   if (n_change[1] != time_vec[1]){
-    stop("The first entry of n_change must equal the first entry of time_vec. The first row of n and the first
-         entry of n_change are representative of the population of the room at time zero. Format n and n_change
-         inputs so that their first entries / rows are for the initial conditions, and further entries represent
-         when these initial conditions change.")
+    stop("If parameters change over time, n_change must be input so that The first entry of n_change equals the 
+    #first entry of time_vec. The first row of n and the first entry of n_change are representative of the population 
+    #of the room at time zero. Format n and n_change inputs so that their first entries / rows are for the 
+    #initial conditions, and further entries represent when these initial conditions change.")
   }
   
   #Lets create data frame to hold our values
@@ -767,40 +878,90 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   #pass to our secant_method() function. However, we have to handle cases where n has more than
   #one column / Gp has a length greater than one. In these cases, our input argument of n will
   #be the row sum of n. For Gp, it is more complicated. We will duplicate n into n_weights, which
-  #will give the proportion of the population for each person type. Then, we can calcualted a weighted
+  #will give the proportion of the population for each person type. Then, we can calcualte a weighted
   #Gp by multiplying the row elementwise by Gp and taking the sum.
   
-  #Can't do an and statement as dim(n) when n is a single number creates a logical(0)
   #Initialize variables to be modified
   n_arg = 0
   n_weight = 1
   Gp_arg = 0
+  aer_arg = 0
+  V_arg = 0
   
+  #Can't do an and statement as dim(n) when n is a single number creates a logical(0)
   #If n is a matrix entry
   if (length(n) > 1){
     #If n has more than one column
-    if (dim(n)[2]){
-      #Want to pass row sum as argument
+    if (dim(n)[2] > 1){
+      #Want to get row sums for n_arg
       n_arg = apply(n, 1, sum)
+      
+      #Also need to calcualte n_weight. Need to get the transverse as information is returned column wise 
+      #despite the function being applied on rows.
+      n_weight = t(apply(n, 1, function(x){x / sum(x)}))
+      
+      #Now need to check if Gp was input as a matrix. Can simply see if dim(Gp) is null
+      if(is.null(dim(Gp))){
+        #If dim is null, was input as a vector
+        #Now, we can calculate Gp_arg by multiplying each row by Gp element-wise
+        Gp_arg = apply(n_weight, 1, function(x, Gp){sum(x * Gp)}, Gp)
+        
+      }else{ #else, input as a matrix. In this case, both n and Gp should be the same dimension.
+        #Thus, we can simply multipy n_weight and Gp then take the row sums
+        Gp_arg = apply(n_weight * Gp, 1, sum)
+      }
+      
+      #Now we calculate aer_arg and V_arg. For both, we check to see if length is greater than one.
+      #If so, we can keep the original value. If not, repeat the only value passed so that the entry
+      #is a vector whole length is the number of rows of n.
+      
+      if (length(aer) > 1){
+        aer_arg = aer
+      }else{
+        aer_arg = rep(aer, length(n_arg))
+      }
+      
+      if (length(V) > 1){
+        V_arg = V
+      }else{
+        V_arg = rep(V, length(n_arg))
+      }
+      
+    }else{#else, n only has one column
+      #n_arg is just the input vector of n
+      n_arg = n
+      
+      #Gp will either be its vector entry, or a repeat of the singular entry provided
+      if (length(Gp) > 1){
+        Gp_arg = Gp
+      }else{
+        Gp_arg = rep(Gp, length(n_arg))
+      }
+      
+      #Now we calculate aer_arg and V_arg. For both, we check to see if length is greater than one.
+      #If so, we can keep the original value. If not, repeat the only value passed so that the entry
+      #is a vector whole length is the number of rows of n.
+      
+      if (length(aer) > 1){
+        aer_arg = aer
+      }else{
+        aer_arg = rep(aer, length(n_arg))
+      }
+      
+      if (length(V) > 1){
+        V_arg = V
+      }else{
+        V_arg = rep(V, length(n_arg))
+      }
+      
     }
-    
-  }else{
-    #else, n_arg = n
+  }else{#else, n is input as a single value
+    #arguments are all equal to their input values. At this point, all values would be averaged if more than one
+    #value was passed.
     n_arg = n
-  }
-  
-  #If Gp has multiple entries
-  if (length(Gp) > 1){
-    #Calculate weights for n. Need to get the transverse as information is returned column wise despite the function
-    #being applied on rows.
-    n_weight = t(apply(n, 1, function(x){x / sum(x)}))
-    
-    #Now, we can calculae Gp_arg by multiplying each row by Gp element-wise
-    Gp_arg = apply(n_weight, 1, function(x, Gp){sum(x * Gp)}, Gp)
-  }else{
-    #Else, the value of Gp_arg will just be Gp. However, we want Gp_arg to be the same length of n_arg. Thus, we can
-    #simply repeat the value of Gp_arg for the length of n_arg
-    Gp_arg = rep(Gp, length(n_arg))
+    Gp_arg = Gp
+    aer_arg = aer
+    V_arg = V
   }
   
   #Now we can assign parameter values for each row of period_data_final, and then calculate parameter estimates.
@@ -839,7 +1000,7 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       period_data_final$"Objective Function Value"[row] = secant_output$f_root
     }
   }else{
-    #Otherwise, need to determine n_arg and Gp_arg index values, store these values, and then obtain estimates
+    #Otherwise, need to determine parameter_arg index values, store these values, and then obtain estimates
     #First, create new column in period_data_final to store relevant index values
     period_data_final$"Param Index" = rep(0, dim(period_data_final)[1])
     
@@ -865,8 +1026,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       period_data_final$"Param Index"[row] = index_val
       
       #save output from secant method
-      secant_output = secant_method(aer, n_arg[index_val], Gp_arg[index_val], 
-                                    V, C0, C1, delta_t, Cr, tol, max_iter)
+      secant_output = secant_method(aer[index_val], n_arg[index_val], Gp_arg[index_val], 
+                                    V[index_val], C0, C1, delta_t, Cr, tol, max_iter)
       #get our parameter estimate, 
       period_data_final$"Parameter Estimate"[row] = secant_output$root
       #Also return other diagnostic info
@@ -876,9 +1037,13 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
     }
   }
   
-  #Now we can return values. We will return the average estimate and period_data_final, 
+  #Now we can return values. We will return the average estimate and period_data_final.
+  #We will also return a data frame containing information of parameter_arg values
+  
+  params = data.frame('aer_arg' = aer_arg, 'n_arg' = n_arg, 'Gp_arg' = Gp_arg, 'V_arg' = V_arg)
   
   return(list(average_value = mean(period_data_final$"Parameter Estimate"), 
               median_value = median(period_data_final$"Parameter Estimate"),
-              period_data = period_data_final))
+              period_data = period_data_final,
+              parameters = params))
 }
