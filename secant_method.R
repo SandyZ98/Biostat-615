@@ -406,6 +406,9 @@ secant_method = function(aer = NA, n = NA, Gp = NA, V = NA, C0, C1, delta_t, Cr 
 #'        *parameters : returns information on the parameter arguments used while calling secant_method
 #'        Each row corresponds to the chronological change in parameters. Will always be at least one row,
 #'        which represents the parameters at time = 0.
+#'        removed_periods : Base return value is a string stating that no periods were removed. For periods
+#'        in which 0 values will be passed as arguments, these periods are removed from period_data and
+#'        stored here for troubleshooting. 0 arguments are nonsensical and can not be handled by this method.
 secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_change = NA, 
                        quant_cutoff = 0.9, Cr = 400, tol=1e-10, max_iter=1000){
   
@@ -978,6 +981,23 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   
   #if n is constant, will always have the same parameter estimates
   if (length(n_arg) == 1){
+    
+    #Now, we need to check each argument to be passed to secant_output for a 0 value. 0 values being passes
+    #cause errors, and are nonsensical. However, it is still possible that this situation can occur.
+    #Thus, we check each argument for 0. In this case, as parameters do not change, if 0 is passed as an
+    #argument, return an error message
+    
+    #Have to do the logical check in a weird way. Need to check if the length of the which() statement that checks
+    #if each parameter is equal to 0. If this which statement has length, then one of the values == 0. Thus, '
+    #throw a warning and assign NA values.
+    
+    if(length(which(c(aer, n_arg, Gp_arg, V) == 0)) >= 1) {
+      
+      stop("0 values passed as parameters. 0 values are nonsensical, and can not be handled by this function.
+           Assign non-zero values to input arguments.")
+    }
+    
+    
     for (row in seq(1, dim(period_data_final)[1])){
       #Get CO2 and time values
       C0 = co2_vec[period_data_final$Index.Start[row]]
@@ -1025,6 +1045,31 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       
       period_data_final$"Param Index"[row] = index_val
       
+      #Now, we need to check each argument to be passed to secant_output for a 0 value. 0 values being passes
+      #cause errors, and are nonsensical. However, it is still possible that this situation can occur.
+      #Thus, we check each argument for 0. If any are zero, we want to append NA as the output for the values
+      #we will append to the data frame. Later, we will remove rows with na from the data frame.
+      
+      #Have to do the logical check in a weird way. Need to check if the length of the which() statement that checks
+      #if each parameter is equal to 0. If this which statement has length, then one of the values == 0. Thus, '
+      #throw a warning and assign NA values.
+      
+      if(length(which(c(aer[index_val], n_arg[index_val], 
+                        Gp_arg[index_val], V[index_val]) == 0)) >= 1) {
+        period_data_final$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final$"Convergence"[row] = NA
+        period_data_final$"Iterations"[row] = NA
+        period_data_final$"Objective Function Value"[row] = NA
+        
+        #Also throw a warning
+        warning("0 values passed as parameters. 0 values are nonsensical, and can not be handled by this function.
+                Zero value computations are skipped, and data is moved to 'removed_periods'. Check 'removed_periods'
+                output to see relevant data.")
+        
+        next
+      }
+      
       #save output from secant method
       secant_output = secant_method(aer[index_val], n_arg[index_val], Gp_arg[index_val], 
                                     V[index_val], C0, C1, delta_t, Cr, tol, max_iter)
@@ -1037,6 +1082,28 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
     }
   }
   
+  #Now, we want to identify rows that we want to remove. Those will be the ones that were assigned NA
+  #in the previous calculation loop. We identify the appropriate indexes, move the data to the removed_periods
+  #data frame, and then remove the rows from period_data_final.
+  
+  #First, find which indexes need to be removed
+  
+  index_remove = which(is.na(period_data_final$"Parameter Estimate"))
+  
+  #If where are no indexes, index_remove will have a value of integer(0). This is problematic when trying
+  #to remove rows, as calling with a value of integer(0) will remove all of the rows. Thus, we check
+  #to see if index_remove has any values before removing rows.
+  
+  removed_periods = "No periods were removed"
+  
+  if(length(index_remove) > 0){
+    #Save data to be removed
+    removed_periods = period_data_final[index_remove,]
+    #Remove data from period_data_final
+    period_data_final = period_data_final[-index_remove,]
+  }
+  
+  
   #Now we can return values. We will return the average estimate and period_data_final.
   #We will also return a data frame containing information of parameter_arg values
   
@@ -1045,5 +1112,6 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   return(list(average_value = mean(period_data_final$"Parameter Estimate"), 
               median_value = median(period_data_final$"Parameter Estimate"),
               period_data = period_data_final,
-              parameters = params))
+              parameters = params,
+              removed_periods = removed_periods))
 }
