@@ -780,10 +780,10 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   #assigning the column names to be the same as the exp_periods() output. This initial row will be removed
   #later. Need to assign some starting value so I can append to the data frame.
   period_data_final = data.frame("Index.Start" = c(), "Index.Stop" = c(), "Type" = c(), 
-                                 "Time.Start" = c(), "Time.Stop" = c(), 'Interval P Size' = c())
+                                 "Time.Start" = c(), "Time.Stop" = c(), 'Interval.P.Size' = c())
   
   #Really quick, just save the value of p so we won't have to grab it later
-  p_val = period_data$'Interval P Size'[1]
+  p_val = period_data$'Interval.P.Size'[1]
   
   #if dim(n)[1] > 1, then we have to worry about n changing within an exponential period. However, can check this
   #by looking at the length of n_change. If this is greater than 1, then dim(n)[1] must also be greater than 1.
@@ -814,7 +814,7 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                          "Type" = c(period_data$Type[row]), 
                          "Time.Start" = c(period_data$Time.Start[row]), 
                          "Time.Stop" = c(time_append),
-                         'Interval P Size' = c(p_val))
+                         'Interval.P.Size' = c(p_val))
       
       period_data_final = rbind(period_data_final, dummy)
       
@@ -843,7 +843,7 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                              "Type" = c(period_data$Type[row]), 
                              "Time.Start" = c(time_append_start), 
                              "Time.Stop" = c(time_append),
-                             'Interval P Size' = c(p_val) )
+                             'Interval.P.Size' = c(p_val) )
           
           period_data_final = rbind(period_data_final, dummy)
         }
@@ -859,7 +859,7 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                          "Type" = c(period_data$Type[row]), 
                          "Time.Start" = c(time_append_start), 
                          "Time.Stop" = c(period_data$Time.Stop[row]),
-                         'Interval P Size' = c(p_val) )
+                         'Interval.P.Size' = c(p_val) )
       
       period_data_final = rbind(period_data_final, dummy)
       
