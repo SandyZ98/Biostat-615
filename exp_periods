@@ -14,6 +14,8 @@
 #'        *Type : Type of Exponential period. Either Growth or Decay
 #'        *Time Start : The POSIXct string time representation of the start time
 #'        *Time Stop : The POSIXct string time representation of the stop time
+#'        *Interval P Size : Gives the neighborhood interval size on both sides of a point. If p = 2,
+#'        then the interval used for a point at index i goes from i - 2 to i + 2
 
 exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   #We have two vector inputs. One for our carbon dioxide data, one for our time data. Time data must be of the class POSIXct.
