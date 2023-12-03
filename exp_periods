@@ -16,7 +16,7 @@
 #'        *Time Stop : The POSIXct string time representation of the stop time
 #'        *Interval P Size : Gives the neighborhood interval size on both sides of a point. If p = 2,
 #'        then the interval used for a point at index i goes from i - 2 to i + 2
-
+        
 exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   #We have two vector inputs. One for our carbon dioxide data, one for our time data. Time data must be of the class POSIXct.
   #Quant_cutoff is the decimal representation of the quantile cutoff for variance. The base value is 0.9. 
@@ -218,7 +218,7 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   useful_data = unique(useful_data)
   
   #Lets also assign a new column that simply returns the neighborhood size used for calculating interval calculations
-  useful_data$'Interval P Size' = rep(p, dim(useful_data)[1])
+  useful_data$'Interval.P.Size' = rep(p, dim(useful_data)[1])
   
   return(useful_data)
   
