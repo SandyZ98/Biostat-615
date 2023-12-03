@@ -398,17 +398,20 @@ secant_method = function(aer = NA, n = NA, Gp = NA, V = NA, C0, C1, delta_t, Cr 
 #' @param tol : absolute difference of function values between steps we use as a stopping condition
 #' @param max_iter : maximum number of iterations
 #' @returns : A list with the following attributes:
-#'        *average_value : returns the average value of the estimated parameter
-#'        *median_value : returns the median value of the estimated parameter
-#'        *period_data : returns the period_data_final data frame. Useful to get the distribution of the parameter
+#'        *summary_raw : returns the summary() of the esimated parameter using raw CO2 data
+#'        *summary_interval : returns the summary() of the esimated parameter using interval average CO2 data
+#'        *raw_co2_df : returns the period_data_final data frame. Useful to get the distribution of the parameter
 #'        estimates, and additional information on regions of estimation and diagnostic information from
 #'        the root finding method.
+#'        *interval_avg_df : returns the period_data_final_ia data frame. May be useful when ranges of CO2 are 
+#'        small and error from sensor readings can impair analysis with raw data
 #'        *parameters : returns information on the parameter arguments used while calling secant_method
 #'        Each row corresponds to the chronological change in parameters. Will always be at least one row,
 #'        which represents the parameters at time = 0.
 #'        removed_periods : Base return value is a string stating that no periods were removed. For periods
 #'        in which 0 values will be passed as arguments, these periods are removed from period_data and
 #'        stored here for troubleshooting. 0 arguments are nonsensical and can not be handled by this method.
+#'        interval_p_value : Returns the value of p used for calculating the interval CO2 values
 secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_change = NA, 
                        quant_cutoff = 0.9, Cr = 400, tol=1e-10, max_iter=1000){
   
@@ -776,7 +779,11 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   #Create a new empty data frame that will hold all of the new / split up periods. Manually
   #assigning the column names to be the same as the exp_periods() output. This initial row will be removed
   #later. Need to assign some starting value so I can append to the data frame.
-  period_data_final = data.frame("Index.Start" = c(), "Index.Stop" = c(), "Type" = c(), "Time.Start" = c(), "Time.Stop" = c())
+  period_data_final = data.frame("Index.Start" = c(), "Index.Stop" = c(), "Type" = c(), 
+                                 "Time.Start" = c(), "Time.Stop" = c(), 'Interval P Size' = c())
+  
+  #Really quick, just save the value of p so we won't have to grab it later
+  p_val = period_data$'Interval P Size'[1]
   
   #if dim(n)[1] > 1, then we have to worry about n changing within an exponential period. However, can check this
   #by looking at the length of n_change. If this is greater than 1, then dim(n)[1] must also be greater than 1.
@@ -806,7 +813,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                          "Index.Stop" = c(index_append), 
                          "Type" = c(period_data$Type[row]), 
                          "Time.Start" = c(period_data$Time.Start[row]), 
-                         "Time.Stop" = c(time_append) )
+                         "Time.Stop" = c(time_append),
+                         'Interval P Size' = c(p_val))
       
       period_data_final = rbind(period_data_final, dummy)
       
@@ -834,7 +842,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                              "Index.Stop" = c(index_append), 
                              "Type" = c(period_data$Type[row]), 
                              "Time.Start" = c(time_append_start), 
-                             "Time.Stop" = c(time_append) )
+                             "Time.Stop" = c(time_append),
+                             'Interval P Size' = c(p_val) )
           
           period_data_final = rbind(period_data_final, dummy)
         }
@@ -849,7 +858,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
                          "Index.Stop" = c(period_data$Index.Stop[row]), 
                          "Type" = c(period_data$Type[row]), 
                          "Time.Start" = c(time_append_start), 
-                         "Time.Stop" = c(period_data$Time.Stop[row]) )
+                         "Time.Stop" = c(period_data$Time.Stop[row]),
+                         'Interval P Size' = c(p_val) )
       
       period_data_final = rbind(period_data_final, dummy)
       
@@ -978,6 +988,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
   period_data_final$"Iterations" = rep(0, dim(period_data_final)[1])
   period_data_final$"Objective Function Value" = rep(0, dim(period_data_final)[1])
   
+  #We will also make a duplicate data frame that will store calculations using the interval_avg CO2 values
+  period_data_final_ia = period_data_final
   
   #if n is constant, will always have the same parameter estimates
   if (length(n_arg) == 1){
@@ -997,8 +1009,8 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
            Assign non-zero values to input arguments.")
     }
     
-    
     for (row in seq(1, dim(period_data_final)[1])){
+
       #Get CO2 and time values
       C0 = co2_vec[period_data_final$Index.Start[row]]
       t0 = period_data_final$Time.Start[row]
@@ -1007,6 +1019,29 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       
       #get our delta time value for the same indexes
       delta_t = as.numeric(difftime(t1,t0), units = "hours")
+      
+      #Sometimes, when using raw values, C0 can be greater than C1. If this occurs, the method will never converge
+      #need to not run the method if this occurs.
+      if (C0 >= C1){
+        period_data_final$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final$"Convergence"[row] = NA
+        period_data_final$"Iterations"[row] = NA
+        period_data_final$"Objective Function Value"[row] = NA
+        
+        period_data_final_ia$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final_ia$"Convergence"[row] = NA
+        period_data_final_ia$"Iterations"[row] = NA
+        period_data_final_ia$"Objective Function Value"[row] = NA
+        
+        #Also throw a warning
+        warning("C0 was computed to be greater or equal to C1 for some calculations. Data where this occurs
+                is moved to 'removed_periods. Check 'removed_periods' output to see releveant data.")
+        
+        next
+      }
+      
       
       #save output from secant method
       secant_output = secant_method(aer, n_arg, Gp_arg, V, 
@@ -1018,15 +1053,41 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       period_data_final$"Convergence"[row] = secant_output$convergence
       period_data_final$"Iterations"[row] = secant_output$iter
       period_data_final$"Objective Function Value"[row] = secant_output$f_root
+      
+      #Do it again, but with the interval avg CO2 values
+      
+      #Get CO2 and time values. First calculate indexes
+      C0_start = max(period_data_final_ia$Index.Start[row] - p_val, 1)
+      C0_stop = min(period_data_final_ia$Index.Start[row] + p_val, length(co2_vec))
+      C0 = mean(co2_vec[C0_start:C0_stop])
+      
+      C1_start = max(period_data_final_ia$Index.Stop[row] - p_val, 1)
+      C1_stop = min(period_data_final_ia$Index.Stop[row] + p_val, length(co2_vec))
+      C1 = mean(co2_vec[C1_start:C1_stop])
+      
+      #Other parameters are the same
+      
+      #save output from secant method
+      secant_output = secant_method(aer, n_arg, Gp_arg, V, 
+                                    C0, C1, delta_t, Cr, tol, max_iter)
+      
+      #get our parameter estimate, 
+      period_data_final_ia$"Parameter Estimate"[row] = secant_output$root
+      #Also return other diagnostic info
+      period_data_final_ia$"Convergence"[row] = secant_output$convergence
+      period_data_final_ia$"Iterations"[row] = secant_output$iter
+      period_data_final_ia$"Objective Function Value"[row] = secant_output$f_root
+      
     }
   }else{
     #Otherwise, need to determine parameter_arg index values, store these values, and then obtain estimates
-    #First, create new column in period_data_final to store relevant index values
+    #First, create new column in both period_data_final data frames to store relevant index values
     period_data_final$"Param Index" = rep(0, dim(period_data_final)[1])
+    period_data_final_ia$"Param Index" = rep(0, dim(period_data_final)[1])
     
     #Still need to loop
     for (row in seq(1, dim(period_data_final)[1])){
-      
+
       #Still need to get CO2 and time values
       C0 = co2_vec[period_data_final$Index.Start[row]]
       t0 = period_data_final$Time.Start[row]
@@ -1041,9 +1102,10 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       
       index_val = max(which(n_change < period_data_final$Time.Stop[row]))
       
-      #We want to save this index value for later in period_data_final
+      #We want to save this index value for later in period_data_final and period_data_final_ia
       
       period_data_final$"Param Index"[row] = index_val
+      period_data_final_ia$"Param Index"[row] = index_val
       
       #Now, we need to check each argument to be passed to secant_output for a 0 value. 0 values being passes
       #cause errors, and are nonsensical. However, it is still possible that this situation can occur.
@@ -1062,10 +1124,38 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
         period_data_final$"Iterations"[row] = NA
         period_data_final$"Objective Function Value"[row] = NA
         
+        period_data_final_ia$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final_ia$"Convergence"[row] = NA
+        period_data_final_ia$"Iterations"[row] = NA
+        period_data_final_ia$"Objective Function Value"[row] = NA
+        
         #Also throw a warning
         warning("0 values passed as parameters. 0 values are nonsensical, and can not be handled by this function.
                 Zero value computations are skipped, and data is moved to 'removed_periods'. Check 'removed_periods'
                 output to see relevant data.")
+        
+        next
+      }
+      
+      #Sometimes, when using raw values, C0 can be greater than C1. If this occurs, the method will never converge
+      #need to not run the method if this occurs.
+      if (C0 >= C1){
+        period_data_final$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final$"Convergence"[row] = NA
+        period_data_final$"Iterations"[row] = NA
+        period_data_final$"Objective Function Value"[row] = NA
+        
+        period_data_final_ia$"Parameter Estimate"[row] = NA
+        #Also return other diagnostic info
+        period_data_final_ia$"Convergence"[row] = NA
+        period_data_final_ia$"Iterations"[row] = NA
+        period_data_final_ia$"Objective Function Value"[row] = NA
+        
+        #Also throw a warning
+        warning("C0 was computed to be greater or equal to C1 for some calculations. Data where this occurs
+                is moved to 'removed_periods. Check 'removed_periods' output to see releveant data.")
         
         next
       }
@@ -1079,6 +1169,31 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
       period_data_final$"Convergence"[row] = secant_output$convergence
       period_data_final$"Iterations"[row] = secant_output$iter
       period_data_final$"Objective Function Value"[row] = secant_output$f_root
+      
+      #Do it again, but with the interval avg CO2 values
+      
+      #Get CO2 and time values. First calculate indexes
+      C0_start = max(period_data_final_ia$Index.Start[row] - p_val, 1)
+      C0_stop = min(period_data_final_ia$Index.Start[row] + p_val, length(co2_vec))
+      C0 = mean(co2_vec[C0_start:C0_stop])
+      
+      C1_start = max(period_data_final_ia$Index.Stop[row] - p_val, 1)
+      C1_stop = min(period_data_final_ia$Index.Stop[row] + p_val, length(co2_vec))
+      C1 = mean(co2_vec[C1_start:C1_stop])
+      
+      #Other parameters are the same
+      
+      #save output from secant method
+      secant_output = secant_method(aer[index_val], n_arg[index_val], Gp_arg[index_val], 
+                                    V[index_val], C0, C1, delta_t, Cr, tol, max_iter)
+      
+      #get our parameter estimate, 
+      period_data_final_ia$"Parameter Estimate"[row] = secant_output$root
+      #Also return other diagnostic info
+      period_data_final_ia$"Convergence"[row] = secant_output$convergence
+      period_data_final_ia$"Iterations"[row] = secant_output$iter
+      period_data_final_ia$"Objective Function Value"[row] = secant_output$f_root
+      
     }
   }
   
@@ -1103,15 +1218,25 @@ secant_main = function(time_vec, co2_vec, aer = NA, n = NA, Gp = NA, V = NA, n_c
     period_data_final = period_data_final[-index_remove,]
   }
   
+  #Now we do the same thing, but with period_data_final_ia. We don't need to move rows here, only delete.
+  
+  index_remove = which(is.na(period_data_final_ia$"Parameter Estimate"))
+  
+  if(length(index_remove) > 0){
+    #Remove data from period_data_final_ia
+    period_data_final_ia = period_data_final_ia[-index_remove,]
+  }
   
   #Now we can return values. We will return the average estimate and period_data_final.
   #We will also return a data frame containing information of parameter_arg values
   
   params = data.frame('aer_arg' = aer_arg, 'n_arg' = n_arg, 'Gp_arg' = Gp_arg, 'V_arg' = V_arg)
   
-  return(list(average_value = mean(period_data_final$"Parameter Estimate"), 
-              median_value = median(period_data_final$"Parameter Estimate"),
-              period_data = period_data_final,
+  return(list(summary_raw = summary(period_data_final$"Parameter Estimate"), 
+              summary_interval = summary(period_data_final_ia$"Parameter Estimate"),
+              raw_co2_df = period_data_final,
+              interval_avg_df = period_data_final_ia,
               parameters = params,
-              removed_periods = removed_periods))
+              removed_periods = removed_periods,
+              interval_p_value = p_val))
 }
