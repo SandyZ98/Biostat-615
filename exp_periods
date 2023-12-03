@@ -133,6 +133,11 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
   
   for (ind in indexes){
     #Get Slope
+    #Need to check if index == 1. If this is the case, we act as if index == 2. This will
+    #prevent errors when index is one.
+    if(ind == 1){
+      ind = 2
+    }
     slope = data$`Interval Slope`[ind]
     #If slope is positive
     if (slope > 0){
