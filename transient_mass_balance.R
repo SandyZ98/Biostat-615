@@ -111,7 +111,9 @@ estimate_ventilation <- function(freq,
     for(iter in 1:max.iter){
       expQ = exp(-Q/volume*freq)
       Chat_C = E/Q*(1-expQ)+(Ci_1 - envCO2)*expQ + envCO2 - Ci
+      
       derivChat_C = -E/(Q^2) * (1-expQ) + expQ * (freq / volume) * (E/Q - Ci_1 + envCO2)
+
       f = 2*sum(Chat_C*derivChat_C)
       df = 2*sum(derivChat_C^2 + Chat_C*(
         2*E/(Q^3)*(1-expQ) -
@@ -164,12 +166,12 @@ estimate_ventilation <- function(freq,
                         verbose=verbose, record.steps=record.steps, 
                         critpoints=critpoints, nadj_CO2rate=nadj_CO2rate,
                         CO2=CO2, init.Q=init.Q, envCO2known=envCO2known,
-                        E.init = E.init, envCO2.init = envCO2.init, freq=freq))
+                        E.init = E.init, envCO2.init = envCO2.init, freq=freq, temp=temp))
   }
 }
 
 multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critpoints,
-                         nadj_CO2rate, CO2, init.Q, envCO2known, E.init, envCO2.init, freq){
+                         nadj_CO2rate, CO2, init.Q, envCO2known, E.init, envCO2.init, freq, temp){
   if(is.null(envCO2known)){
     estimate_envCO2 <- TRUE
   }else{
@@ -186,13 +188,13 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
   convergence = 0
   Gradient_summand = function(){ # calculates the summands of the gradient
     if(estimate_E){
-      dSSdE <- 2*(Chat_C*1/Q*(1-q))
+      dSSdE <- (Chat_C/Q*(1-q))
     } else {
       dSSdE <- 0
     }
-    dSSdQ <- 2*(Chat_C*derivChat_C)
+    dSSdQ <- (Chat_C*derivChat_C)
     if(estimate_envCO2){
-      dSSdenvCO2 <- 2*(Chat_C*(-q + 1))
+      dSSdenvCO2 <- (Chat_C*(1-q))
     } else {
       dSSdenvCO2 <- 0
     }
@@ -200,21 +202,21 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
   }
   Hessian_summand = function(){ # calculates the summands of the hessian
     if(estimate_E){
-      d2SSdE2 <- 2*((1/Q*(1-q))  ^2)
-      d2SSdEdQ <- 2*(
+      d2SSdE2 <- ((1/Q*(1-q))  ^2)
+      d2SSdEdQ <- (
         Chat_C*(-1/Q^2*(1-q) + 1/Q*(freq/volume)*q) + 
           1/Q*(1-q)*derivChat_C)
     } else {
       d2SSdE2 <- 0
       d2SSdEdQ <- 0
     }
-    d2SSdQ2 <- 2*(derivChat_C^2 + Chat_C*(
+    d2SSdQ2 <- (derivChat_C^2 + Chat_C*(
       2*E/(Q^3)*(1-q) -
         q * (freq/volume)^2 * (E/Q - Ci_1 + envCO2) + 
         2*E/Q^2 * q *(-freq/volume))) 
     if(estimate_envCO2){
-      d2SSdenvCO22 <- 2*((1-q)^2)
-      d2SSdQdenvCO2 <- 2*(
+      d2SSdenvCO22 <- ((1-q)^2)
+      d2SSdQdenvCO2 <- (
         Chat_C*(q*freq/volume) +
           (1-q)*derivChat_C)
     } else {
@@ -222,7 +224,7 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
       d2SSdQdenvCO2 <- 0
     }
     if(estimate_E & estimate_envCO2){
-      d2SSdEdenvCO2 <- 2*(1/Q*(1-q)^2)
+      d2SSdEdenvCO2 <- (1/Q*(1-q)^2)
     } else {
       d2SSdEdenvCO2 <- 0
     }
@@ -289,9 +291,11 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
   }
   
   for(iter in 1:max.iter){
-    q = exp(-Q/volume*freq)
+    #q = exp(-Q/volume*freq)
     #Chat_C = E/Q*(1-q)+(Ci_1 - envCO2)*q + envCO2 - Ci
-    derivChat_C =(-E/Q^2)*(1-q) + E/Q*(freq/volume)*q + (Ci_1 - envCO2)*(-freq/volume)*q
+    #derivChat_C =(-E/Q^2)*(1-q) + E/Q*(freq/volume)*q + (Ci_1 - envCO2)*(-freq/volume)*q
+    derivChat_C = -E/(Q^2) * (1-q) + q * (freq / volume) * (E/Q - Ci_1 + envCO2)
+    
     gradientres <- Gradient_summand()
     dSSdE = gradientres[[1]]
     dSSdQ = gradientres[[2]]
@@ -303,41 +307,52 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     d2SSdEdenvCO2 = hessianres[[4]]
     d2SSdQdenvCO2 = hessianres[[5]]
     d2SSdenvCO22 = hessianres[[6]]
-    gradient[1] = sum(dSSdQ)
-    hessian[1,1] = sum(d2SSdQ2)
+    # gradient[1] = 2*sum(dSSdQ)
+    # hessian[1,1] = 2*sum(d2SSdQ2)
+    gradient[1] = 2*mean(dSSdQ)
+    hessian[1,1] = 2*mean(d2SSdQ2)
     if(estimate_E){
       for(i in 1:length(Eindices)){
         index = Eindices[[i]]
-        gradient[i+1] = sum(dSSdE[index])
-        hessian[i+1, i+1] = d2SSdE2*length(index)
-        hessian[1, i+1] = sum(d2SSdEdQ[index])
+        # gradient[i+1] = 2*sum(dSSdE[index])
+        # hessian[i+1, i+1] = 2*d2SSdE2*length(index)
+        # hessian[1, i+1] = 2*sum(d2SSdEdQ[index])
+        gradient[i+1] = 2*sum(dSSdE[index])/(length(CO2) - 1)
+        hessian[i+1, i+1] = 2*d2SSdE2*(length(index)/(length(CO2) - 1))
+        hessian[1, i+1] = 2*sum(d2SSdEdQ[index])/(length(CO2) - 1)
         hessian[i+1, 1] = hessian[1, i+1]
         if(estimate_envCO2){
-          hessian[i+1, nrow(hessian)] = d2SSdEdenvCO2*length(index)
+          hessian[i+1, nrow(hessian)] = 2*d2SSdEdenvCO2*length(index)
           hessian[nrow(hessian), i+1] = hessian[i+1, nrow(hessian)]
         }
       }
     } 
     if(estimate_envCO2){
-      gradient[length(gradient)] = sum(dSSdenvCO2)
-      hessian[nrow(hessian), nrow(hessian)] = d2SSdenvCO22*(length(CO2)-1)
-      hessian[1, nrow(hessian)] = sum(d2SSdQdenvCO2)
+      gradient[length(gradient)] = 2*mean(dSSdenvCO2)
+      #gradient[length(gradient)] = 2*sum(dSSdenvCO2)
+      # hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22*(length(CO2)-1)
+      # hessian[1, nrow(hessian)] = 2*sum(d2SSdQdenvCO2)
+      hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22
+      hessian[1, nrow(hessian)] = 2*mean(d2SSdQdenvCO2)
       hessian[nrow(hessian), 1] = hessian[1, nrow(hessian)]
     }
-    delta = solve(hessian)%*%gradient
+    delta = 1e-3 * solve(hessian)%*%gradient
+  
     
     # update parameters 
-    Qnew = max(Q - delta[1], 1e-6) # constrain to be positive
+    #Qnew = max(Q - delta[1], 1e-6) # constrain to be positive
+    Qnew = Q - delta[1]
     if(estimate_E){
       Enew = rep(0, length(E))
       for(i in 1:length(Eindices)){
         index = Eindices[[i]]
-        #Enew[index] = E[index] - delta[i+1]
-        Enew[index] = pmax(E[index] - delta[i+1], 0) # constrain to be positive
+        Enew[index] = E[index] - delta[i+1]
+        #Enew[index] = pmax(E[index] - delta[i+1], 0) # constrain to be positive
       }
     }
     if(estimate_envCO2){
-      envCO2new = max(envCO2 - delta[length(delta)], 0) # constrain to be positive
+      #envCO2new = max(envCO2 - delta[length(delta)], 0) # constrain to be positive
+      envCO2new = envCO2 - delta[length(delta)]
     }
     
     # constraints : envCO2 between 375 and 425, all E >=0, ventilation between 0 and 1000
@@ -368,7 +383,7 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
       Q = Qnew
       if(estimate_E) E = Enew
       if(estimate_envCO2) envCO2 = envCO2new
-      
+    q=exp(-Q/volume*freq)
     Chat_C = E/Q*(1-q)+(Ci_1 - envCO2)*q + envCO2 - Ci
     f1 = Chat_C%*%Chat_C
     if (verbose) {
@@ -379,7 +394,7 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
       }
       print(paste("Iter:",iter, 
                   "Q:", Q, 
-                  "envCO2:", envCO2,
+                  "envCO2:", ug_to_ppm(envCO2, temp),
                   "f:",f1, 
                   "sum_delta:", sum(delta)))
       print(Es)
@@ -390,10 +405,11 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
         index = Eindices[[i]]
         Etemp[i] = E[index[1]]
       }
-      steps[iter,] <- c(iter, Q, envCO2, f1, sum(delta), Etemp)
+      steps[iter,] <- c(iter, Q, ug_to_ppm(envCO2, temp), f1, sum(delta), Etemp)
       
     }
-    if(abs(f1-f0)<=tol*(abs(f1)+abs(f0))){
+    #if(abs(f1-f0)<=tol*(abs(f1)+abs(f0))){
+    if(sqrt(gradient %*% gradient)<=tol){
       convergence = 1
       break
     }
@@ -404,14 +420,14 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     
     return(list(ventilation = Q, 
                 E = E,
-                envCO2 = envCO2,
+                envCO2 = ug_to_ppm(envCO2, temp),
                 iter=iter, 
                 convergence=convergence,
                 steps=steps))
   } else {
     return( list(ventilation = Q, 
                  E = E,
-                 envCO2 = envCO2,
+                 envCO2 = ug_to_ppm(envCO2, temp),
                  iter=iter, 
                  convergence=convergence))
   }

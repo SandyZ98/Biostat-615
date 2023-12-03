@@ -9,7 +9,7 @@ library(Rcpp)
 # input data has following colums:
 # time, n, optional: age, gender, MET, CO2rate in L/s at 1 atm & 0 Celsius 
 # method choices: Euler's method or Exponential integrator 
-simulateData <- function(persondata, volume, ventilation_rate, envCO2=400, startCO2=400, freq = 1, CO2var = 1, temp = 25, method='Euler'){
+simulateData <- function(persondata, volume, ventilation_rate, envCO2=400, startCO2=400, freq = 1, CO2var = 1, temp = 25, method='Euler', useCpp = TRUE){
   
   ## get emissions from persondata ##
   emissions <- persondata_to_emission(persondata, temp, freq)
@@ -39,6 +39,7 @@ simulateData <- function(persondata, volume, ventilation_rate, envCO2=400, start
   # C[i+1] = C[i] + dC/dt*freq + error 
   # First-order exponential integrator (used in Batterman):
   # C[i+1] = N*CO2rate/ventilation_rate*(1-exp(-ventilation_rate/volume*freq)) + (C[i]-envCO2)*exp(-ventilation_rate/volume*freq) + envCO2 + error
+  
   cppFunction('NumericVector simulateCO2_euler(double freq, double startCO2, double envCO2, double ventilation_rate, double volume, NumericVector times, NumericVector nadj_CO2rate, NumericVector errors) {
                int n = times.size();
                NumericVector CO2(n);
@@ -57,12 +58,41 @@ simulateData <- function(persondata, volume, ventilation_rate, envCO2=400, start
                }
                return CO2;
                }')
+  simulateCO2_euler_R <- function(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors) {
+    n = length(times)
+    CO2 = rep(0, n)
+    CO2[1] = startCO2
+    for(i in 1:(n-1)) {
+      CO2[i+1] = CO2[i] + (nadj_CO2rate[i] + (envCO2-CO2[i])*ventilation_rate)/volume*freq + errors[i]
+    }
+    return(CO2)
+  }
+  simulateCO2_exp_R <- function(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors) {
+    n = length(times)
+    CO2 = rep(0, n)
+    CO2[1] = startCO2
+    for(i in 1:(n-1)) {
+      CO2[i+1] = nadj_CO2rate[i]/ventilation_rate*(1-exp(-ventilation_rate/volume*freq)) + (CO2[i]-envCO2)*exp(-ventilation_rate/volume*freq) + envCO2 + errors[i]
+    }
+    return(CO2)
+  }
+  
+  if(useCpp){
   if(method=="Euler"){
     CO2 <- simulateCO2_euler(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors)
   } else if(method=='Exponential') {
     CO2 <- simulateCO2_exp(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors)
   } else {
     stop("method must be 'Euler' or 'Exponential'")
+  }
+  } else {
+    if(method=="Euler"){
+      CO2 <- simulateCO2_euler_R(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors)
+    } else if(method=='Exponential') {
+      CO2 <- simulateCO2_exp_R(freq, startCO2, envCO2, ventilation_rate, volume, times, nadj_CO2rate, errors)
+    } else {
+      stop("method must be 'Euler' or 'Exponential'")
+    }
   }
   
   ret = data.frame('time' = times, 'CO2' = ug_to_ppm(CO2, temp))
