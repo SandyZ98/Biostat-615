@@ -172,6 +172,11 @@ estimate_ventilation <- function(freq,
 
 multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critpoints,
                          nadj_CO2rate, CO2, init.Q, envCO2known, E.init, envCO2.init, freq, temp){
+  # convert from ug/m^3 to ppm
+  ug_to_ppm <- function(ug, temp) {
+    ug * 44.01 * 1000 * 101.325 / 8314 / (273.15+temp)
+  }
+  
   if(is.null(envCO2known)){
     estimate_envCO2 <- TRUE
   }else{
@@ -307,19 +312,19 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
     d2SSdEdenvCO2 = hessianres[[4]]
     d2SSdQdenvCO2 = hessianres[[5]]
     d2SSdenvCO22 = hessianres[[6]]
-    # gradient[1] = 2*sum(dSSdQ)
-    # hessian[1,1] = 2*sum(d2SSdQ2)
-    gradient[1] = 2*mean(dSSdQ)
-    hessian[1,1] = 2*mean(d2SSdQ2)
+    gradient[1] = 2*sum(dSSdQ)
+    hessian[1,1] = 2*sum(d2SSdQ2)
+    # gradient[1] = 2*mean(dSSdQ)
+    # hessian[1,1] = 2*mean(d2SSdQ2)
     if(estimate_E){
       for(i in 1:length(Eindices)){
         index = Eindices[[i]]
-        # gradient[i+1] = 2*sum(dSSdE[index])
-        # hessian[i+1, i+1] = 2*d2SSdE2*length(index)
-        # hessian[1, i+1] = 2*sum(d2SSdEdQ[index])
-        gradient[i+1] = 2*sum(dSSdE[index])/(length(CO2) - 1)
-        hessian[i+1, i+1] = 2*d2SSdE2*(length(index)/(length(CO2) - 1))
-        hessian[1, i+1] = 2*sum(d2SSdEdQ[index])/(length(CO2) - 1)
+        gradient[i+1] = 2*sum(dSSdE[index])
+        hessian[i+1, i+1] = 2*d2SSdE2*length(index)
+        hessian[1, i+1] = 2*sum(d2SSdEdQ[index])
+        # gradient[i+1] = 2*sum(dSSdE[index])/(length(CO2) - 1)
+        # hessian[i+1, i+1] = 2*d2SSdE2*(length(index)/(length(CO2) - 1))
+        # hessian[1, i+1] = 2*sum(d2SSdEdQ[index])/(length(CO2) - 1)
         hessian[i+1, 1] = hessian[1, i+1]
         if(estimate_envCO2){
           hessian[i+1, nrow(hessian)] = 2*d2SSdEdenvCO2*length(index)
@@ -328,16 +333,16 @@ multi_Newton <- function(persondata, max.iter, tol, verbose, record.steps, critp
       }
     } 
     if(estimate_envCO2){
-      gradient[length(gradient)] = 2*mean(dSSdenvCO2)
-      #gradient[length(gradient)] = 2*sum(dSSdenvCO2)
-      # hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22*(length(CO2)-1)
-      # hessian[1, nrow(hessian)] = 2*sum(d2SSdQdenvCO2)
-      hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22
-      hessian[1, nrow(hessian)] = 2*mean(d2SSdQdenvCO2)
+      #gradient[length(gradient)] = 2*mean(dSSdenvCO2)
+      gradient[length(gradient)] = 2*sum(dSSdenvCO2)
+      hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22*(length(CO2)-1)
+      hessian[1, nrow(hessian)] = 2*sum(d2SSdQdenvCO2)
+      # hessian[nrow(hessian), nrow(hessian)] = 2*d2SSdenvCO22
+      # hessian[1, nrow(hessian)] = 2*mean(d2SSdQdenvCO2)
       hessian[nrow(hessian), 1] = hessian[1, nrow(hessian)]
     }
-    delta = 1e-3 * solve(hessian)%*%gradient
-  
+    #delta =  solve(hessian + diag(1e-2, nrow=nrow(hessian)))%*%gradient
+    delta =  solve(hessian)%*%gradient
     
     # update parameters 
     #Qnew = max(Q - delta[1], 1e-6) # constrain to be positive
