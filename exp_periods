@@ -170,6 +170,12 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
         stop = temp[1] + ind - 2
       }
       
+      #Want to check. If start >= stop, then we do not want to return that period. simply continue to next iteration
+      #of the loop
+      if (start >= stop){
+        next
+      }
+      
       #Create dummy dataframe to append values
       dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val),
                          "Time Start" = data$`Time`[start], "Time Stop" = data$`Time`[stop])
@@ -207,6 +213,12 @@ exp_periods = function(time_vec, co2_vec, quant_cutoff = 0.9){
         #This time, we want the first value that meets the critera. However, we need to add
         #a value of ind - 2 to get the correct index value
         stop = temp[1] + ind - 2
+      }
+      
+      #Want to check. If start >= stop, then we do not want to return that period. simply continue to next iteration
+      #of the loop
+      if (start >= stop){
+        next
       }
       
       #Create dummy dataframe to append values
