@@ -7,16 +7,11 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(ggplot2)
+library(EVCO2)
 ```
 
-```{r}
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\exp_periods.R")
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\Gp_calcs.R")
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\secant_method.R")
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\persondata_to_emission.R")
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\simulate_data.R")
-
-```
 
 ```{r}
 #Lets look at some raw data
@@ -28,10 +23,226 @@ source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analys
 #the slope deflects back across zero. If an exponential growth process, find where the slope becomes non-positive. If an
 #exponential decay process, find where the slope becomes non-negative.
 
-source("C:\\Tom Files\\CESM MS\\Fall 2023\\BIOSTAT 615\\Package files for analysis\\Exponential_Periods_Rationale.R")
+data = example_data
+#Convert to date time using POSIXct
+data[,1] = as.POSIXct(data$`Time(dd/mm/yyyy)`, format = "%j/%m/%Y %I:%M:%S %p")
+
+
+#Lets do a running p point forward average and variance
+#Need to find the lowest p value which causes smoothing
+#of the data. Can check for smoothness by doing u tests / t tests
+#between base data slope and p point slope distributions
+
+#Create data frames to hold slope, avg, and var
+p_slope = data.frame("base" = data$`Carbon dioxide(ppm)`)
+p_slope$'base'= c(0, (data$`Carbon dioxide(ppm)`[2:dim(data)[1]] -  data$`Carbon dioxide(ppm)`[1:dim(data)[1] - 1]) / 
+                       as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+p_avg = data.frame('base' = data$`Carbon dioxide(ppm)`)
+p_var = data.frame('base' = rep(0,dim(data)[1]))
+
+#Start the loop
+p = 1
+while (p > 0) {
+  #initialize storage of data
+  p_avg[, paste(p)] = p_slope$base 
+  p_var[, paste(p)] = p_slope$base
+  #for each index value, calculate the slope, avg, and var
+  for (i in seq(1:dim(data)[1])){
+    #get values
+    #if i < p+1, just go from 1 to i + p
+    #if i > dim(data)[1] - p, just go from i - p to dim(data)[1]
+    if (i < p + 1){
+      values = data$`Carbon dioxide(ppm)`[1:(i + p)]
+    }else if (i > dim(data)[1] - p){
+      values = data$`Carbon dioxide(ppm)`[(i - p):dim(data)[1]]
+    } else {
+      values = data$`Carbon dioxide(ppm)`[(i - p):(i + p)]
+    }
+    #assign values
+    p_avg[i, paste(p)] = mean(values)
+    p_var[i, paste(p)] = var(values)
+
+  }
+  #After having all the values, can calcualte slope
+  p_slope[, paste(p)] = c(0, (p_avg[2:dim(data)[1], paste(p)] -  p_avg[1:dim(data)[1] - 1, paste(p)]) / 
+                            as.numeric(difftime(data$`Time(dd/mm/yyyy)`[2:dim(data)[1]] , data$`Time(dd/mm/yyyy)`[1:dim(data)[1] - 1], units = 'secs')))
+  #For p = 1, we want to skip
+  if (p == 1){
+    #iterate p
+    p = p + 1
+    next
+  }
+  #Our condition for stopping is if the distribution of slopes for p is:
+  #Significantly different from base
+  #Not significantly different from previous
+  #In this case, we want the values from p - 1
+  #Need to use KS test as this test is sensitive to changes in the shape of the distribution
+  #The means of the distributions are not going to differ, but their shapes will
+  test_base = ks.test(p_slope[, paste(p)], p_slope$base, exact = TRUE)
+  test_prev = ks.test(p_slope[, paste(p)], p_slope[, paste(p - 1)], exact = TRUE)
+  
+  #If we meet our conditons
+  if ((test_base$p.value < 0.05) & (test_prev$p.value > 0.05)){
+    #save minimal p value
+    p = p - 1
+    break
+  }
+
+  p = p + 1
+}
+
+#Save relevant p value data to our main data frame
+data$'Interval Avg' = p_avg[, paste(p)]
+data$'Interval Var' = p_var[, paste(p)]
+data$'Interval Slope' = p_slope[, paste(p)]
+#plot to look at data
+par(mfrow = c(2,2))
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Avg`, xlab = 'Time', ylab = 'Average CO2 Concentration(ppm)', 
+     main = "Average CO2 Concentration vs Time")
+plot(data$`Time(dd/mm/yyyy)`, data$`Carbon dioxide(ppm)`, xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+     main ="Raw CO2 Concentration vs Time")
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Var`, xlab = 'Time', ylab = 'CO2 Variance', 
+     main = "CO2 Variance vs Time")
+plot(data$`Time(dd/mm/yyyy)`, data$`Interval Slope`, xlab = 'Time', ylab = 'CO2 Slope', 
+     main = "Average CO2 Slope vs Time")
+
+#Lets plot on smaller scale for finer graphical interpretation
+#input range of data points to plot
+range = 100
+for (i in seq(1, ceiling(dim(data)[1] / range))) {
+  #need to options for range. Last plot will not plot 100 points, but just the remainder
+  range_sub = 0
+  if (i == ceiling(dim(data)[1] / range)){
+    range_sub = range - dim(data)[1] %% range
+  }
+  lower = (i-1)*range + 1
+  upper = i*range - range_sub
+  par(mfrow = c(2,2))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Avg`[lower:upper], xlab = 'Time', ylab = 'Interval Average CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Carbon dioxide(ppm)`[lower:upper], xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Var`[lower:upper], xlab = 'Time', ylab = 'Interval CO2 Variance', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+  plot(data$`Time(dd/mm/yyyy)`[lower:upper], data$`Interval Slope`[lower:upper], xlab = 'Time', ylab = 'Interval CO2 Slope', 
+       main = paste(data$`Time(dd/mm/yyyy)`[lower], ' to ', paste(data$`Time(dd/mm/yyyy)`[upper], sep = '')))
+}
+
+#save cutoff value. I think 90% is reasonable, can add as argument in function call
+cutoff = quantile(data$`Interval Var`, probs = 0.9)
+
+#Create data frane to hold our exponential growth and decay periods
+useful_data = data.frame("Index Start" = c(), "Index Stop" = c(), "Type" = c(), "Time Start" = c(), "Time Stop" = c())
+
+#get indexes
+indexes = which(data$`Interval Var` >= cutoff)
+#Sequential indexes will be part of the same growth / decay process. Can assign these indexes the same number
+#Want to know when indexes[i] != indexes[i + 1]. Can use these index values as our index values for our points.
+#Need to call back from indexes to get the correct index from our data
+indexes = c(indexes[which(indexes[1: length(indexes) - 1] + 1 != indexes[2 : length(indexes)])], indexes[length(indexes)])
+
+#From each index, we need to go backwards in time and forwards in time until the slope of our
+#Interval Var changes from positive to negative or negative  to positive - need to find the 
+#adjacent local maxima and minima. Also want to make sure that when this happens, we are below
+#our 90% quantile cutoff
+
+#lets reset the plot layout
+par(mfrow = c(1,1))
+
+for (ind in indexes){
+  #Get Slope
+  slope = data$`Interval Slope`[ind]
+  #If slope is positive
+  if (slope > 0){
+    #If slope is positive, type is growth
+    type_val = "Growth"
+    
+    #Get the slope of all points preceding that are non-positive
+    temp = which(data$`Interval Slope`[1:ind] <= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the beginning of the data
+    if (length(temp) == 0){
+      start = 1
+    }else{
+      #The last value of temp will give the index of the value at which the 
+      #exponential process started
+      start = temp[length(temp)]
+    }
+    
+    #Now, we do the same, but in the forward direction
+    temp = which(data$`Interval Slope`[ind:dim(data)[1]] <= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the end of the data
+    if (length(temp) == 0){
+      stop = dim(data)[1]
+    }else{
+      #This time, we want the first value that meets the critera. However, we need to add
+      #a value of ind - 2 to get the correct index value
+      stop = temp[1] + ind - 2
+    }
+    
+    #Create dummy dataframe to append values
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val),
+                       "Time Start" = data$`Time(dd/mm/yyyy)`[start], "Time Stop" = data$`Time(dd/mm/yyyy)`[stop])
+    
+    #Append to existing Data Frame
+    useful_data = rbind(useful_data, dummy)
+    
+  }
+  else{ 
+    #othwerwise, slope is negative
+    type_val = "Decay"
+    
+    #Get the slope of all points preceding that are non-negative
+    temp = which(data$`Interval Slope`[1:ind] >= 0)
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the beginning of the data
+    if (length(temp) == 0){
+      start = 1
+    }else{
+      #The last value of temp will give the index of the value at which the 
+      #exponential process started
+      start = temp[length(temp)]
+    }
+    
+    #Now, we do the same, but in the forward direction
+    temp = which(data$`Interval Slope`[ind:dim(data)[1]] >= 0)
+    
+    
+    #Need to throw an exception if temp has no entries. This means that 
+    #the exponential process starts at the end of the data
+    if (length(temp) == 0){
+      stop = dim(data)[1]
+    }else{
+      #This time, we want the first value that meets the critera. However, we need to add
+      #a value of ind - 2 to get the correct index value
+      stop = temp[1] + ind - 2
+    }
+    
+    #Create dummy dataframe to append values
+    dummy = data.frame("Index Start" = c(start), "Index Stop" = c(stop), "Type" = c(type_val),
+                       "Time Start" = data$`Time(dd/mm/yyyy)`[start], "Time Stop" = data$`Time(dd/mm/yyyy)`[stop])
+    
+    #Append to existing Data Frame
+    useful_data = rbind(useful_data, dummy)
+  }
+  #While we are here, plot the sections
+  plot(data$`Time(dd/mm/yyyy)`[start:stop], data$`Interval Avg`[start:stop],
+       xlab = 'Time', ylab = 'CO2 Concentration(ppm)', 
+       main = paste(data$`Time(dd/mm/yyyy)`[start], ' to ', paste(data$`Time(dd/mm/yyyy)`[stop], sep = '')))
+}
+
+#Sometimes there are duplicates. We can remove duplicates using unique
+useful_data = unique(useful_data)
+
 
 useful_data
 ```
+
+
 ```{r}
 #Hold on, how do we determine the interval we average on? What we do is we use the Kolmogorov–Smirnov test to determine
 #the minimum p-interval value to make the distribution of our slopes for our averaged CO2 values different from the
@@ -92,9 +303,9 @@ for (i in seq(0.1,1,.01)){
 
 #First, get some useful info
 
-aer_asymptote = secant_starter(NA, n, Gp, Volume, C0, C1, delta_t)$asymptote
+aer_asymptote = build_up_starter(NA, n, Gp, Volume, C0, C1, delta_t)$asymptote
 
-aer_root = secant_method(NA, n, Gp, Volume, C0, C1, delta_t)$root
+aer_root = build_up_method(NA, n, Gp, Volume, C0, C1, delta_t)$root
 
 
 #Lets plot!
@@ -107,16 +318,16 @@ lines(c(aer_asymptote,aer_asymptote), c(-1, 1), col = "red")
 
 #The red line represents the asymptote that will always be generated by this function
 #The blue line represents where the function value is estimated to be zero
-#The values of these can be determined using the secant_starter and secant_method fucntions
+#The values of these can be determined using the build_up_starter and build_up_method fucntions
 
 cat("Secant Starter Output. Start and Stop are the two starting points needed for the root finding secant method. Asymptote is the calculated asymptote of the objective function. Solving for the Air Exchange Rate and the Volume, Start and Stop will always be less than the asymptote. Solving for the number of people or the Gp value, Start and Stop will always be larger than the asymptote.\n")
 
-secant_starter(NA, n, Gp, Volume, C0, C1, delta_t)
+build_up_starter(NA, n, Gp, Volume, C0, C1, delta_t)
   
 cat("-------------------\n")
 cat("Secant Method Output. Secant Method will solve for the root of the build_up function and return the root value, the objective function  value at the root, the number of iterations of the secant method and if the method converged or not.\n")
 
-secant_method(NA, n, Gp, Volume, C0, C1, delta_t)
+build_up_method(NA, n, Gp, Volume, C0, C1, delta_t)
 
 
 #Lets also plot for the other variables, so you believe what I'm saying!
@@ -131,27 +342,27 @@ for (i in n_seq){
   plot_vals_n = c(plot_vals_n , build_up(aer, i, Gp, Volume, C0, C1, delta_t))
 }
 
-n_asymptote = secant_starter(aer, NA, Gp, Volume, C0, C1, delta_t)$asymptote
+n_asymptote = build_up_starter(aer, NA, Gp, Volume, C0, C1, delta_t)$asymptote
 
-n_root = secant_method(aer, NA, Gp, Volume, C0, C1, delta_t)$root
+n_root = build_up_method(aer, NA, Gp, Volume, C0, C1, delta_t)$root
 
 plot_vals_Gp = c()
 for (i in Gp_seq){
   plot_vals_Gp = c(plot_vals_Gp, build_up(aer, n, i, Volume, C0, C1, delta_t))
 }
 
-Gp_asymptote = secant_starter(aer, n, NA, Volume, C0, C1, delta_t)$asymptote
+Gp_asymptote = build_up_starter(aer, n, NA, Volume, C0, C1, delta_t)$asymptote
 
-Gp_root = secant_method(aer, n, NA, Volume, C0, C1, delta_t)$root
+Gp_root = build_up_method(aer, n, NA, Volume, C0, C1, delta_t)$root
 
 plot_vals_V = c()
 for (i in V_seq){
   plot_vals_V = c(plot_vals_V, build_up(aer, n, Gp, i, C0, C1, delta_t))
 }
 
-V_asymptote = secant_starter(aer, n, Gp, NA, C0, C1, delta_t)$asymptote
+V_asymptote = build_up_starter(aer, n, Gp, NA, C0, C1, delta_t)$asymptote
 
-V_root = secant_method(aer, n, Gp, NA, C0, C1, delta_t)$root
+V_root = build_up_method(aer, n, Gp, NA, C0, C1, delta_t)$root
 
 
 #Lets plot!
@@ -224,7 +435,7 @@ CO2rates_lmin <- unique(emissions$nadj_CO2rate_lmin)
 simulated.dat$nadj_CO2rate_lmin <- emissions$nadj_CO2rate_lmin
 simulated.dat$time <- as.POSIXct.numeric(emissions$time*3600, origin="1970-01-01", tz="UTC")
 
-#Prep for calling secant_main function
+#Prep for calling build_up_main function
 n = matrix(c(0,15,0,15,0,0,2,0,2,0), 5,2)
 Gp = matrix(c(Gp_rate(16.00 / 24), Gp_rate(11.96 / 24)), 5, 2, byrow = TRUE)
 V = rep(volume, 5)
@@ -236,9 +447,9 @@ n_change = simulated.dat$time[c(1,
 
 
 
-#Lets call our secant_main function
+#Lets call our build_up_main function
 #First, use first pass values. Gp estimate using Gp_rate
-output_sim_1 = secant_main(simulated.dat$time,
+output_sim_1 = build_up_main(simulated.dat$time,
                      simulated.dat$CO2,
                      NA,
                      n,
@@ -248,7 +459,7 @@ output_sim_1 = secant_main(simulated.dat$time,
                      )
 
 #Second, use recomendation from earlier code - use n = 1 and use values from emissions$nadj_CO2rate_lmin
-output_sim_2 = secant_main(simulated.dat$time,
+output_sim_2 = build_up_main(simulated.dat$time,
                       simulated.dat$CO2,
                       NA,
                       matrix(1,5,1),
@@ -257,7 +468,7 @@ output_sim_2 = secant_main(simulated.dat$time,
                       n_change,
                       )
 #Look at how much we need to reduce Gp by to get an answer close to the input Air Exchange Rate of .75
-output_sim_3 = secant_main(simulated.dat$time,
+output_sim_3 = build_up_main(simulated.dat$time,
                        simulated.dat$CO2,
                        NA,
                        n,
@@ -268,7 +479,7 @@ output_sim_3 = secant_main(simulated.dat$time,
 
 
 #Try using values from the 1.4 met table in the main paper
-output_sim_4 = secant_main(simulated.dat$time,
+output_sim_4 = build_up_main(simulated.dat$time,
                        simulated.dat$CO2,
                        NA,
                        n,
@@ -315,7 +526,7 @@ room_volume = room_length * room_width * room_height
 
 #Lets get outputdata for n = 1, n = 3, and n = 5
 
-output_data_1 = secant_main(data_1$`Time(dd/mm/yyyy)`,
+output_data_1 = build_up_main(data_1$`Time(dd/mm/yyyy)`,
                             data_1$`Carbon dioxide(ppm)`,
                             NA,
                             1,
@@ -324,7 +535,7 @@ output_data_1 = secant_main(data_1$`Time(dd/mm/yyyy)`,
                             NA,
                             quant_cutoff = 0.7)
 
-output_data_3 = secant_main(data_1$`Time(dd/mm/yyyy)`,
+output_data_3 = build_up_main(data_1$`Time(dd/mm/yyyy)`,
                             data_1$`Carbon dioxide(ppm)`,
                             NA,
                             3,
@@ -333,7 +544,7 @@ output_data_3 = secant_main(data_1$`Time(dd/mm/yyyy)`,
                             NA,
                             quant_cutoff = 0.7)
 
-output_data_5 = secant_main(data_1$`Time(dd/mm/yyyy)`,
+output_data_5 = build_up_main(data_1$`Time(dd/mm/yyyy)`,
                             data_1$`Carbon dioxide(ppm)`,
                             NA,
                             5,
@@ -342,12 +553,28 @@ output_data_5 = secant_main(data_1$`Time(dd/mm/yyyy)`,
                             NA,
                             quant_cutoff = 0.7)
 
+output_data_5$raw_co2_df
+
+output_data_5$interval_avg_df
+
 #I am going to manually remove rows from the output that are not between 9 am and 5pm. We will assume that
 #There are not individuals in the building outside of working hours
 
 #Normally, there are between 3 - 5 people in that part of the lab. Based on these results, the Air Exchange Rate
 #can be estimated to be between 4 and 6 air exchanges per hour, which is consistent with the minimum recommended
 #values for the laboratory.
+
+data_1$Color = rep(0, length(data_1$`Time(dd/mm/yyyy)`))
+
+for (row in seq(1, nrow(output_data_5$raw_co2_df))) {
+  index_change = seq(output_data_5$raw_co2_df$Index.Start[row], output_data_5$raw_co2_df$Index.Stop[row])
+  data_1$Color[index_change] = 1
+}
+
+data_1$Color = as.factor(data_1$Color)
+
+ggplot(data = data_1, aes(x = `Time(dd/mm/yyyy)`, y = `Carbon dioxide(ppm)`, color = Color)) + geom_point() + scale_color_manual(values = c("black", "red")) + labs(x = "Date / Time") + ggtitle("Aranet Sensor OC1B8 CO2 Data 11/13/2023 - 11/15/2023")
+
 ```
 
 ```{r}
@@ -357,17 +584,19 @@ output_data_5 = secant_main(data_1$`Time(dd/mm/yyyy)`,
 #Run 5 times for each condition
 #200 simulations total
 
-
 ventilation_values = seq(0.01, 1, length = 10)
 variance_values = c(0.01, 0.1, 1, 2)
 
-master_array = array(0, dim = c(5,10,4))
+master_array_raw = array(0, dim = c(5,10,4))
+master_array_interval = array(0, dim = c(5,10,4))
 
 for (i in seq(1,length(variance_values))) { #length(variance_values)
   #each row corresponds to an iteration value, each column holds the values calculated for a given ventilation value
-  average_matrix = matrix(0,5,10)
+  average_matrix_raw = matrix(0,5,10)
+  average_matrix_interval = matrix(0,5,10)
   for (j in seq(1, length(ventilation_values))){
-    average_vals = c()
+    average_vals_raw = c()
+    average_vals_interval = c()
     for (k in seq(1,5)){
       # simulating data
 
@@ -419,7 +648,7 @@ for (i in seq(1,length(variance_values))) { #length(variance_values)
       simulated.dat$nadj_CO2rate_lmin <- emissions$nadj_CO2rate_lmin
       simulated.dat$time <- as.POSIXct.numeric(emissions$time*3600, origin="1970-01-01", tz="UTC")
       
-      #Prep for calling secant_main function
+      #Prep for calling build_up_main function
       n = matrix(c(0,15,0,15,0,0,2,0,2,0), 5,2)
       Gp = matrix(c(Gp_rate(16.00 / 24), Gp_rate(11.96 / 24)), 5, 2, byrow = TRUE)
       V = rep(volume, 5)
@@ -430,8 +659,8 @@ for (i in seq(1,length(variance_values))) { #length(variance_values)
                                       which(simulated.dat$time == 17*3600))]
       
       
-      #Get our output
-      output = secant_main(simulated.dat$time,
+      #Get our output.
+      output = build_up_main(simulated.dat$time,
                           simulated.dat$CO2,
                           NA,
                           n,
@@ -439,22 +668,99 @@ for (i in seq(1,length(variance_values))) { #length(variance_values)
                           V,
                           n_change)
       
-      #store average value into our list
-      average_vals = c(average_vals, output$summary_raw[4])
+      #store average values into our lists
+      average_vals_raw = c(average_vals_raw, output$summary_raw[4])
+      average_vals_interval = c(average_vals_interval, output$summary_interval[4])
     }
     
     #Append our average_vals vector to our matrix
-    average_matrix[,j] = average_vals
+    average_matrix_raw[,j] = average_vals_raw
+    average_matrix_interval[,j] = average_vals_interval
+    
   }
-  #Rename the columns as the ventilation value and then append to our array
-  colnames(average_matrix) = ventilation_values
+  #Append matrix values to our arrays
   
-  master_array[,,i] = average_matrix
+  master_array_raw[,,i] = average_matrix_raw
+  master_array_interval[,,i] = average_matrix_interval
 }
 
-dimnames(master_array)[3] = list(c('0.01', '0.1', '1', '2'))
+dimnames(master_array_raw)[3] = list(c('0.01', '0.1', '1', '2'))
+dimnames(master_array_interval)[3] = list(c('0.01', '0.1', '1', '2'))
 
 
+master_array_raw
+master_array_interval
 
+#lets convert true values for the ventilation rates to Air Exchange Rate (1 / hour)
+ventilation_true = ventilation_values * 3600 / 500
+
+raw_relerr = master_array_raw
+raw_relerr_mean = matrix(0,4,10)
+raw_relerr_sd = matrix(0,4,10)
+interval_relerr = master_array_interval
+interval_relerr_mean = matrix(0,4,10)
+interval_relerr_sd = matrix(0,4,10)
+
+#Lets calculate relative errors and generate summary info.
+for (i in seq(1:dim(raw_relerr)[3])){
+ raw_relerr[,,i] = t(apply(raw_relerr[,,i], 1, function(x,truth){(x - truth) / truth}, ventilation_true))
+ interval_relerr[,,i] = t(apply(interval_relerr[,,i], 1, function(x,truth){(x - truth) / truth}, ventilation_true))
+ 
+ raw_relerr_mean[i,] = apply(raw_relerr[,,i], 2, mean)
+ raw_relerr_sd[i,] = apply(raw_relerr[,,i], 2, sd)
+ 
+ interval_relerr_mean[i,] = apply(interval_relerr[,,i], 2, mean)
+ interval_relerr_sd[i,] = apply(interval_relerr[,,i], 2, sd)
+ 
+}
+
+temp_raw_df = data.frame(raw_relerr_mean)
+temp_raw_df$'var' = variance_values
+colnames(temp_raw_df) = c(ventilation_values, 'var')
+
+summary_raw = pivot_longer(temp_raw_df, colnames(temp_raw_df)[-length(colnames(temp_raw_df))], names_to = "Q.true", values_to = "mean.rel.error")
+
+temp_raw_df2 = data.frame(raw_relerr_sd)
+temp_raw_df2$'var' = variance_values
+colnames(temp_raw_df2) = c(ventilation_values, 'var')
+
+temp_main_raw = pivot_longer(temp_raw_df2, colnames(temp_raw_df2)[-length(colnames(temp_raw_df2))], names_to = "Q.true", values_to = "sd.rel.error")
+
+summary_raw$"sd.rel.error" = temp_main_raw$"sd.rel.error"
+
+
+#Now, do this again, but with the interval values
+
+temp_interval_df = data.frame(interval_relerr_mean)
+temp_interval_df$'var' = variance_values
+colnames(temp_interval_df) = c(ventilation_values, 'var')
+
+summary_interval = pivot_longer(temp_interval_df, colnames(temp_interval_df)[-length(colnames(temp_interval_df))], names_to = "Q.true", values_to = "mean.rel.error")
+
+temp_interval_df2 = data.frame(interval_relerr_sd)
+temp_interval_df2$'var' = variance_values
+colnames(temp_interval_df2) = c(ventilation_values, 'var')
+
+temp_main_interval = pivot_longer(temp_interval_df2, colnames(temp_interval_df2)[-length(colnames(temp_interval_df2))], names_to = "Q.true", values_to = "sd.rel.error")
+
+summary_interval$"sd.rel.error" = temp_main_interval$"sd.rel.error"
+
+
+#now we can plot! One plot for each summary data frame
+
+ggplot(summary_raw, aes(x=Q.true, y=mean.rel.error, group = var)) +     geom_point() + 
+  geom_line() +  
+  geom_ribbon(aes(ymin=mean.rel.error-sd.rel.error, ymax=mean.rel.error+sd.rel.error), alpha=.2) + facet_wrap(~paste('Simulated CO2 variance:',var))+
+  labs(x="True Ventilation Rate (m3/s)", y="Relative error in estimated ventilation rate") + theme_bw() + ggtitle("Raw CO2 Value Input")
+
+ggplot(summary_interval, aes(x=Q.true, y=mean.rel.error, group = var)) +     geom_point() + 
+  geom_line() +  
+  geom_ribbon(aes(ymin=mean.rel.error-sd.rel.error, ymax=mean.rel.error+sd.rel.error), alpha=.2) + facet_wrap(~paste('Simulated CO2 variance:',var))+
+  labs(x="True Ventilation Rate (m3/s)", y="Relative error in estimated ventilation rate") + theme_bw() + ggtitle("Interval Average CO2 Input")
 ```
+
+
+
+
+
 
